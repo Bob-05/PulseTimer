@@ -48,6 +48,19 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearSelectedTemplate() { selectedTemplateId.value = null }
 
+    /**
+     * Проверяет, есть ли у шаблона интервалы, до запуска сервиса.
+     * Возвращает `false` и при пустом списке, и при ошибке БД — в обоих случаях
+     * запускать таймер не имеет смысла, пользователю покажем Snackbar.
+     */
+    suspend fun hasIntervals(templateId: Long): Boolean {
+        return try {
+            dao.getIntervalsByTemplateId(templateId).first().isNotEmpty()
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     fun addTemplate(name: String, description: String) {
         viewModelScope.launch {
             dao.insertTemplate(TemplateEntity(name = name, description = description))

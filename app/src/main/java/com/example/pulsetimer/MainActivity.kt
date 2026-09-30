@@ -1,10 +1,14 @@
 package com.pulsetimer
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -14,6 +18,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.core.content.ContextCompat
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -28,10 +33,17 @@ import com.pulsetimer.ui.screen.SettingsScreen
 import com.pulsetimer.ui.theme.PulseTimerTheme
 
 class MainActivity : ComponentActivity() {
+
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* результат не важен: сервис продолжит работать в любом случае,
+         но карточка в шторке появится только при granted = true */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         AppSettingsStore.initialize(this)
+        requestNotificationPermissionIfNeeded()
         setContent {
             val settings by AppSettingsStore.settings.collectAsState()
             PulseTimerTheme(themeName = settings.theme) {
@@ -135,17 +147,37 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    /**
+     * На Android 13+ (API 33+) для показа ЛЮБЫХ уведомлений — включая
+     * уведомление foreground-сервиса — требуется runtime-разрешение
+     * POST_NOTIFICATIONS. Без него уведомление молча отбрасывается:
+     * сервис работает, но пользователь не видит ни карточки, ни кнопок
+     * «Пауза / Пропустить / Стоп» в шторке.
+     *
+     * Повторный вызов безопасен: если пользователь уже отказал навсегда,
+     * система просто вернёт false без показа диалога. Такому пользователю
+     * поможет карточка статуса уведомлений в Настройках.
+     */
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val granted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 }
 
 /**
  * Завершение онбординга.
  *
- * Логика:
- *  - если онбординг — стартовый экран (первый запуск), стек = [Onboarding].
- *    previousBackStackEntry == null → navigate(Main) с очисткой Onboarding;
- *  - если онбординг открыт из настроек, стек = [Main, ..., Settings, Onboarding].
- *    previousBackStackEntry != null → popBackStack() возвращает в Settings,
- *    не создавая второй экземпляр Main.
+ *  - первый запуск: стек = [Onboarding], previousBackStackEntry == null →
+ *    navigate(Main) с очисткой Onboarding;
+ *  - вызов из настроек: стек = [Main, Settings, Onboarding] →
+ *    popBackStack() возвращает в Settings, второго Main не создаётся.
  */
 private fun finishOnboarding(
     navController: NavHostController,

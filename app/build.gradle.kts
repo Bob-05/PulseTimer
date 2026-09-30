@@ -24,11 +24,11 @@ android {
 
     buildTypes {
         release {
+            // R8 отключён. Правила proguard намеренно не подключены,
+            // чтобы не создавать иллюзию работающей обфускации.
+            // При включении R8 — вернуть proguardFiles(...) и добавить
+            // -keep правила для Room (см. proguard-rules.pro).
             isMinifyEnabled = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
         }
     }
     compileOptions {
@@ -64,5 +64,4 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
-
 }

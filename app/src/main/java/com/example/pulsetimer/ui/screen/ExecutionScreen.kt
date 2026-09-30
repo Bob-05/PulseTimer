@@ -92,6 +92,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.viewmodel.TimerViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.util.Locale
 
@@ -107,7 +108,56 @@ fun ExecutionScreen(
 
     val isReady = timerState.totalIntervals > 0 && timerState.templateId == templateId
 
+    // Defensive: если сервис не поднял состояние за 6 секунд —
+    // показываем экран ошибки вместо бесконечного спиннера.
+    var timedOut by remember(templateId) { mutableStateOf(false) }
+    LaunchedEffect(templateId) {
+        timedOut = false
+        delay(6_000)
+        timedOut = true
+    }
+
     if (!isReady) {
+        if (timedOut) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF0B0B0B))
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(text = "⚠️", fontSize = 64.sp)
+                    Text(
+                        text = "Не удалось загрузить тренировку",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        text = "Возможно, в тренировке нет интервалов или произошла ошибка.",
+                        color = Color.White.copy(alpha = 0.7f),
+                        style = MaterialTheme.typography.bodyLarge,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = onFinish,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.White.copy(alpha = 0.2f)
+                        )
+                    ) {
+                        Text("Вернуться на главный", color = Color.White)
+                    }
+                }
+            }
+            return
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxSize()

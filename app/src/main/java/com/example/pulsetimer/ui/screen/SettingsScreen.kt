@@ -1,6 +1,7 @@
 package com.pulsetimer.ui.screen
 
 import android.content.Intent
+import android.provider.Settings
 import android.text.format.DateFormat
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -16,7 +17,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -32,6 +33,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -40,6 +42,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -51,9 +54,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.NotificationManagerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.data.entity.SessionLogEntity
@@ -76,6 +83,25 @@ fun SettingsScreen(
     var showClearHistoryConfirmation by remember { mutableStateOf(false) }
     var pendingDeleteLog by remember { mutableStateOf<SessionLogEntity?>(null) }
     var deletingLogId by remember { mutableStateOf<Long?>(null) }
+
+    // Статус уведомлений. Читается при первом входе и при каждом ON_RESUME,
+    // чтобы UI обновился после возврата из системных настроек уведомлений.
+    var notificationsEnabled by remember {
+        mutableStateOf(
+            NotificationManagerCompat.from(context).areNotificationsEnabled()
+        )
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                notificationsEnabled =
+                    NotificationManagerCompat.from(context).areNotificationsEnabled()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val audioPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -116,6 +142,81 @@ fun SettingsScreen(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            // === Статус уведомлений ===
+            item { SectionTitle("Уведомления") }
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (notificationsEnabled) {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.errorContainer
+                        }
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Notifications,
+                                contentDescription = null,
+                                tint = if (notificationsEnabled) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onErrorContainer
+                                }
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (notificationsEnabled)
+                                        "Уведомления разрешены"
+                                    else
+                                        "Уведомления заблокированы",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (notificationsEnabled) {
+                                        MaterialTheme.colorScheme.onSurface
+                                    } else {
+                                        MaterialTheme.colorScheme.onErrorContainer
+                                    }
+                                )
+                                Text(
+                                    text = if (notificationsEnabled)
+                                        "Во время тренировки прогресс и кнопки управления отображаются в шторке."
+                                    else
+                                        "Без разрешения вы не увидите прогресс и кнопки управления во время тренировки.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (notificationsEnabled) {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    } else {
+                                        MaterialTheme.colorScheme.onErrorContainer
+                                    }
+                                )
+                            }
+                        }
+                        if (!notificationsEnabled) {
+                            OutlinedButton(
+                                onClick = {
+                                    val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                        .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                    runCatching { context.startActivity(intent) }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Открыть настройки уведомлений")
+                            }
+                        }
+                    }
+                }
+            }
+
+            // === Звук и голос ===
             item { SectionTitle("Звук и голос") }
             item {
                 SettingSwitch(
@@ -190,6 +291,7 @@ fun SettingsScreen(
                 }
             }
 
+            // === Тактильный отклик ===
             item { SectionTitle("Тактильный отклик") }
             item {
                 SettingSwitch(
@@ -215,6 +317,7 @@ fun SettingsScreen(
                 )
             }
 
+            // === Интерфейс и тема ===
             item { SectionTitle("Интерфейс и тема") }
             item {
                 ChoiceCard(
@@ -257,6 +360,7 @@ fun SettingsScreen(
                 )
             }
 
+            // === Справка ===
             item { SectionTitle("Справка") }
             item {
                 Card(
@@ -295,6 +399,7 @@ fun SettingsScreen(
                 }
             }
 
+            // === История тренировок ===
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
