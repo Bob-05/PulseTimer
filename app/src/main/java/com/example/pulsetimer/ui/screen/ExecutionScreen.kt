@@ -9,8 +9,8 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -198,10 +198,18 @@ fun ExecutionScreen(
                         total = timerState.totalIntervals
                     ),
                     transitionSpec = {
+                        val movingForward = targetState.index > initialState.index
+                        val enterOffset = if (movingForward) 1 else -1
                         (
-                            slideInVertically { height -> height / 3 } + fadeIn()
-                            ).togetherWith(
-                            slideOutVertically { height -> -height / 3 } + fadeOut()
+                            slideInHorizontally(
+                                initialOffsetX = { width -> width * enterOffset },
+                                animationSpec = tween(durationMillis = 350)
+                            ) + fadeIn(animationSpec = tween(durationMillis = 250))
+                        ).togetherWith(
+                            slideOutHorizontally(
+                                targetOffsetX = { width -> -width * enterOffset },
+                                animationSpec = tween(durationMillis = 350)
+                            ) + fadeOut(animationSpec = tween(durationMillis = 250))
                         )
                     },
                     label = "interval_page"

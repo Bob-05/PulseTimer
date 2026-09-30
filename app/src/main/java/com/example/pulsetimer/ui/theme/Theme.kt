@@ -88,9 +88,12 @@ fun PulseTimerTheme(
     )
 }
 
-private fun parsePaletteColor(value: String, fallback: Color): Color =
-    try {
-        Color(android.graphics.Color.parseColor(value))
-    } catch (_: IllegalArgumentException) {
-        fallback
-    }
+private fun parsePaletteColor(value: String, fallback: Color): Color {
+    if (!isValidPaletteColor(value)) return fallback
+    return Color(android.graphics.Color.parseColor(value))
+}
+
+internal fun isValidPaletteColor(value: String): Boolean {
+    if ((value.length != 7 && value.length != 9) || value[0] != '#') return false
+    return value.drop(1).all { it.digitToIntOrNull(16) != null }
+}
