@@ -26,6 +26,8 @@ data class IntervalEntity(
     val durationSeconds: Int,
     val colorHex: String,
     val orderIndex: Int,
+    @ColumnInfo(defaultValue = "'⏱️'")
+    val iconEmoji: String = "⏱️",
     @ColumnInfo(defaultValue = "'COLOR'")
     val backgroundType: String = "COLOR",
     @ColumnInfo(defaultValue = "''")

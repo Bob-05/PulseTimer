@@ -80,7 +80,13 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun addInterval(templateId: Long, name: String, durationSeconds: Int, colorHex: String) {
+    fun addInterval(
+        templateId: Long,
+        name: String,
+        durationSeconds: Int,
+        colorHex: String,
+        iconEmoji: String
+    ) {
         viewModelScope.launch {
             val currentIntervals = dao.getIntervalsByTemplateId(templateId).first()
             val orderIndex = currentIntervals.size
@@ -90,7 +96,8 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
                     name = name,
                     durationSeconds = durationSeconds,
                     colorHex = colorHex,
-                    orderIndex = orderIndex
+                    orderIndex = orderIndex,
+                    iconEmoji = iconEmoji
                 )
             )
         }
@@ -119,6 +126,24 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
                     totalDurationSeconds = duration
                 )
             )
+        }
+    }
+
+    fun deleteSessionLog(log: SessionLogEntity) {
+        viewModelScope.launch {
+            dao.deleteSessionLogById(log.id)
+        }
+    }
+
+    fun deleteSessionLogsForTemplate(templateId: Long) {
+        viewModelScope.launch {
+            dao.deleteSessionLogsByTemplateId(templateId)
+        }
+    }
+
+    fun clearSessionHistory() {
+        viewModelScope.launch {
+            dao.clearAllSessionLogs()
         }
     }
 

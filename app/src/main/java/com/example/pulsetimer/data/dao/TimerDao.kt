@@ -59,6 +59,9 @@ interface TimerDao {
     @Query("DELETE FROM session_logs WHERE id = :logId")
     suspend fun deleteSessionLogById(logId: Long)
 
+    @Query("DELETE FROM session_logs WHERE templateId = :templateId")
+    suspend fun deleteSessionLogsByTemplateId(templateId: Long)
+
     @Query("DELETE FROM session_logs")
     suspend fun clearAllSessionLogs()
 }

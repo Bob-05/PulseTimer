@@ -11,6 +11,8 @@ data class TemplateEntity(
     val name: String,
     val description: String,
     val createdAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(defaultValue = "'🏋️'")
+    val iconEmoji: String = "🏋️",
     @ColumnInfo(defaultValue = "'COLOR'")
     val backgroundType: String = "COLOR",
     @ColumnInfo(defaultValue = "''")

@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -35,6 +36,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -55,6 +59,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     val settings by AppSettingsStore.settings.collectAsState()
     val viewModel: TimerViewModel = viewModel()
     val logs by viewModel.sessionLogs.collectAsState()
+    var showClearHistoryConfirmation by remember { mutableStateOf(false) }
+    var pendingDeleteLog by remember { mutableStateOf<SessionLogEntity?>(null) }
     val audioPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -216,7 +222,20 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
 
-            item { SectionTitle("История тренировок") }
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    SectionTitle("История тренировок")
+                    if (logs.isNotEmpty()) {
+                        TextButton(onClick = { showClearHistoryConfirmation = true }) {
+                            Text("Очистить")
+                        }
+                    }
+                }
+            }
             if (logs.isEmpty()) {
                 item {
                     Text(
@@ -226,10 +245,49 @@ fun SettingsScreen(onBack: () -> Unit) {
                     )
                 }
             } else {
-                items(logs, key = SessionLogEntity::id) { log -> SessionLogCard(log) }
+                items(logs, key = SessionLogEntity::id) { log ->
+                    SessionLogCard(log = log, onDelete = { pendingDeleteLog = log })
+                }
             }
             item { Spacer(modifier = Modifier.height(16.dp)) }
         }
+    }
+
+    pendingDeleteLog?.let { log ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteLog = null },
+            title = { Text("Удалить запись?") },
+            text = { Text("Запись тренировки «${log.templateName}» будет удалена без возможности восстановления.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteSessionLog(log)
+                        pendingDeleteLog = null
+                    }
+                ) { Text("Удалить") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteLog = null }) { Text("Отмена") }
+            }
+        )
+    }
+    if (showClearHistoryConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showClearHistoryConfirmation = false },
+            title = { Text("Очистить историю?") },
+            text = { Text("Все ${logs.size} записей тренировок будут удалены без возможности восстановления.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.clearSessionHistory()
+                        showClearHistoryConfirmation = false
+                    }
+                ) { Text("Очистить") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearHistoryConfirmation = false }) { Text("Отмена") }
+            }
+        )
     }
 }
 
@@ -283,13 +341,22 @@ private fun ChoiceCard(
 }
 
 @Composable
-private fun SessionLogCard(log: SessionLogEntity) {
+private fun SessionLogCard(log: SessionLogEntity, onDelete: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(log.templateName, style = MaterialTheme.typography.titleMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(log.templateName, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                IconButton(onClick = onDelete) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "Удалить запись тренировки",
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(4.dp))
             Text("Дата: ${formatTimestamp(log.startedAt)}", style = MaterialTheme.typography.bodyMedium)
             Text(

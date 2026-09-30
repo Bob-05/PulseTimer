@@ -5,7 +5,13 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.util.Log
 import android.widget.VideoView
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -185,12 +191,35 @@ fun ExecutionScreen(
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
-                    text = timerState.currentIntervalName,
-                    color = Color.White,
-                    style = MaterialTheme.typography.headlineLarge,
-                    textAlign = TextAlign.Center
-                )
+                AnimatedContent(
+                    targetState = IntervalLabel(
+                        index = timerState.currentIntervalIndex,
+                        name = timerState.currentIntervalName,
+                        total = timerState.totalIntervals
+                    ),
+                    transitionSpec = {
+                        (
+                            slideInVertically { height -> height / 3 } + fadeIn()
+                            ).togetherWith(
+                            slideOutVertically { height -> -height / 3 } + fadeOut()
+                        )
+                    },
+                    label = "interval_page"
+                ) { label ->
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = label.name,
+                            color = Color.White,
+                            style = MaterialTheme.typography.headlineLarge,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            text = "Интервал ${label.index + 1} из ${label.total}",
+                            color = Color.White.copy(alpha = 0.8f),
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                    }
+                }
                 Spacer(modifier = Modifier.height(16.dp))
                 BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
                     Text(
@@ -203,12 +232,6 @@ fun ExecutionScreen(
                         maxLines = 1
                     )
                 }
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = "Интервал ${timerState.currentIntervalIndex + 1} из ${timerState.totalIntervals}",
-                    color = Color.White.copy(alpha = 0.8f),
-                    style = MaterialTheme.typography.bodyLarge
-                )
             }
 
             if (timerState.isFinished) {
@@ -290,6 +313,12 @@ fun ExecutionScreen(
         }
     }
 }
+
+private data class IntervalLabel(
+    val index: Int,
+    val name: String,
+    val total: Int
+)
 
 @Composable
 private fun VideoPhaseBackground(uri: String, isPaused: Boolean, fallbackColor: Color) {

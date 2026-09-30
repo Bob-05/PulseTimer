@@ -5,6 +5,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.pulsetimer.data.database.AppDatabase
 import com.pulsetimer.data.entity.SessionLogEntity
+import com.pulsetimer.data.entity.IntervalEntity
 import com.pulsetimer.data.entity.TemplateEntity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -25,8 +26,20 @@ class SessionHistoryTest {
         try {
             val dao = database.timerDao()
             val templateId = dao.insertTemplate(
-                TemplateEntity(name = "Test workout", description = "History test")
+                TemplateEntity(name = "Test workout", description = "History test", iconEmoji = "🏃")
             )
+            val intervalId = dao.insertInterval(
+                IntervalEntity(
+                    templateId = templateId,
+                    name = "Run",
+                    durationSeconds = 30,
+                    colorHex = "#88AA99",
+                    orderIndex = 0,
+                    iconEmoji = "⚡"
+                )
+            )
+            assertEquals("🏃", dao.getTemplateById(templateId).first()?.iconEmoji)
+            assertEquals("⚡", dao.getIntervalsByTemplateId(templateId).first().single().iconEmoji)
             val startedAt = System.currentTimeMillis()
             val logId = dao.insertSessionLog(
                 SessionLogEntity(
@@ -50,6 +63,29 @@ class SessionHistoryTest {
             val completedEntry = dao.getAllSessionLogs().first().single()
             assertNotNull(completedEntry.completedAt)
             assertEquals(5, completedEntry.totalDurationSeconds)
+
+            val secondLogId = dao.insertSessionLog(
+                SessionLogEntity(
+                    templateId = templateId,
+                    templateName = "Test workout",
+                    startedAt = startedAt + 10_000
+                )
+            )
+            dao.deleteSessionLogById(logId)
+            assertEquals(secondLogId, dao.getAllSessionLogs().first().single().id)
+            dao.deleteSessionLogsByTemplateId(templateId)
+            assertEquals(0, dao.getAllSessionLogs().first().size)
+            assertEquals(intervalId, dao.getIntervalsByTemplateId(templateId).first().single().id)
+
+            dao.insertSessionLog(
+                SessionLogEntity(
+                    templateId = templateId,
+                    templateName = "Test workout",
+                    startedAt = startedAt + 20_000
+                )
+            )
+            dao.clearAllSessionLogs()
+            assertEquals(0, dao.getAllSessionLogs().first().size)
         } finally {
             database.close()
         }

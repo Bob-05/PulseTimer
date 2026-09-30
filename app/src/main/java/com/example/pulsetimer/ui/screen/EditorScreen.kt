@@ -6,6 +6,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,6 +43,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -49,6 +53,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -56,8 +61,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pulsetimer.data.entity.IntervalEntity
 import com.pulsetimer.viewmodel.TimerViewModel
+import kotlin.math.absoluteValue
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun EditorScreen(
     viewModel: TimerViewModel = viewModel(),
@@ -114,6 +120,7 @@ fun EditorScreen(
     }
 
     var showAddDialog by remember { mutableStateOf(false) }
+    val intervalsListState = rememberLazyListState()
 
     Scaffold(
         topBar = {
@@ -140,6 +147,7 @@ fun EditorScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .padding(horizontal = 16.dp),
+            state = intervalsListState,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
@@ -157,6 +165,14 @@ fun EditorScreen(
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Text("Параметры тренировки", style = MaterialTheme.typography.titleLarge)
+                            Text("Значок тренировки", style = MaterialTheme.typography.titleMedium)
+                            WorkoutEmojiPicker(
+                                selected = template.iconEmoji,
+                                onSelect = { emoji ->
+                                    viewModel.updateTemplate(template.copy(iconEmoji = emoji))
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            )
                             OutlinedTextField(
                                 value = name,
                                 onValueChange = { name = it },
@@ -251,10 +267,34 @@ fun EditorScreen(
                 }
             } else {
                 items(intervals, key = { it.id }) { interval ->
+                    val itemDistance by remember(interval.id, intervalsListState) {
+                        derivedStateOf {
+                            val layout = intervalsListState.layoutInfo
+                            val item = layout.visibleItemsInfo.firstOrNull { it.key == interval.id }
+                            if (item == null) {
+                                1f
+                            } else {
+                                val center = item.offset + item.size / 2f
+                                val viewportCenter =
+                                    (layout.viewportStartOffset + layout.viewportEndOffset) / 2f
+                                ((center - viewportCenter) / layout.viewportSize.height.coerceAtLeast(1))
+                                    .absoluteValue
+                                    .coerceIn(0f, 1f)
+                            }
+                        }
+                    }
                     IntervalItem(
                         interval = interval,
                         onDelete = { viewModel.deleteInterval(interval) },
-                        onUpdate = viewModel::updateInterval
+                        onUpdate = viewModel::updateInterval,
+                        modifier = Modifier
+                            .animateItem()
+                            .graphicsLayer {
+                                val scale = 1f - itemDistance * 0.08f
+                                scaleX = scale
+                                scaleY = scale
+                                alpha = 1f - itemDistance * 0.25f
+                            }
                     )
                 }
             }
@@ -265,8 +305,8 @@ fun EditorScreen(
     if (showAddDialog) {
         AddIntervalDialog(
             onDismiss = { showAddDialog = false },
-            onAdd = { name, duration, color ->
-                viewModel.addInterval(templateId, name, duration, color)
+            onAdd = { name, duration, color, icon ->
+                viewModel.addInterval(templateId, name, duration, color, icon)
                 showAddDialog = false
             }
         )
@@ -277,7 +317,8 @@ fun EditorScreen(
 fun IntervalItem(
     interval: IntervalEntity,
     onDelete: () -> Unit,
-    onUpdate: (IntervalEntity) -> Unit
+    onUpdate: (IntervalEntity) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -311,7 +352,7 @@ fun IntervalItem(
         }
     }
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().animateContentSize(),
         shape = RoundedCornerShape(12.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
@@ -325,7 +366,9 @@ fun IntervalItem(
                         .size(24.dp)
                         .background(parseColor(interval.colorHex), CircleShape)
                 )
-                Spacer(modifier = Modifier.width(16.dp))
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(interval.iconEmoji, style = MaterialTheme.typography.titleLarge)
+                Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(interval.name, style = MaterialTheme.typography.titleMedium)
                     Text(
@@ -334,6 +377,12 @@ fun IntervalItem(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                Text("Значок интервала", style = MaterialTheme.typography.labelLarge)
+                WorkoutEmojiPicker(
+                    selected = interval.iconEmoji,
+                    onSelect = { onUpdate(interval.copy(iconEmoji = it)) },
+                    modifier = Modifier.fillMaxWidth()
+                )
                 IconButton(onClick = onDelete) {
                     Icon(
                         Icons.Default.Delete,
@@ -387,11 +436,12 @@ fun IntervalItem(
 @Composable
 fun AddIntervalDialog(
     onDismiss: () -> Unit,
-    onAdd: (String, Int, String) -> Unit
+    onAdd: (String, Int, String, String) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var duration by remember { mutableStateOf("") }
     var selectedColor by remember { mutableStateOf("#FF3B30") }
+    var selectedEmoji by remember { mutableStateOf("⏱️") }
 
     val colors = listOf(
         "#FF3B30" to "Красный",
@@ -447,6 +497,13 @@ fun AddIntervalDialog(
                         }
                     }
                 }
+                Spacer(modifier = Modifier.height(12.dp))
+                Text("Значок интервала", style = MaterialTheme.typography.labelLarge)
+                WorkoutEmojiPicker(
+                    selected = selectedEmoji,
+                    onSelect = { selectedEmoji = it },
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         },
         confirmButton = {
@@ -454,7 +511,7 @@ fun AddIntervalDialog(
                 onClick = {
                     val dur = duration.toIntOrNull() ?: 10
                     if (name.isNotBlank()) {
-                        onAdd(name, dur, selectedColor)
+                        onAdd(name, dur, selectedColor, selectedEmoji)
                     }
                 }
             ) {

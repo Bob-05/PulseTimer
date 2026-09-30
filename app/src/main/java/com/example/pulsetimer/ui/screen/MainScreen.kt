@@ -199,6 +199,11 @@ fun TemplateCard(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
+                text = template.iconEmoji,
+                style = MaterialTheme.typography.displayMedium
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
                 text = template.name,
                 style = MaterialTheme.typography.headlineLarge
             )
