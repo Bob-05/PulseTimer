@@ -80,13 +80,7 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun addInterval(
-        templateId: Long,
-        name: String,
-        durationSeconds: Int,
-        colorHex: String,
-        iconEmoji: String
-    ) {
+    fun addInterval(templateId: Long, name: String, durationSeconds: Int, colorHex: String) {
         viewModelScope.launch {
             val currentIntervals = dao.getIntervalsByTemplateId(templateId).first()
             val orderIndex = currentIntervals.size
@@ -96,8 +90,7 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
                     name = name,
                     durationSeconds = durationSeconds,
                     colorHex = colorHex,
-                    orderIndex = orderIndex,
-                    iconEmoji = iconEmoji
+                    orderIndex = orderIndex
                 )
             )
         }

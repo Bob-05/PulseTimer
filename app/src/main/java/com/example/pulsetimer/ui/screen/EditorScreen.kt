@@ -305,8 +305,8 @@ fun EditorScreen(
     if (showAddDialog) {
         AddIntervalDialog(
             onDismiss = { showAddDialog = false },
-            onAdd = { name, duration, color, icon ->
-                viewModel.addInterval(templateId, name, duration, color, icon)
+            onAdd = { name, duration, color ->
+                viewModel.addInterval(templateId, name, duration, color)
                 showAddDialog = false
             }
         )
@@ -367,8 +367,6 @@ fun IntervalItem(
                         .background(parseColor(interval.colorHex), CircleShape)
                 )
                 Spacer(modifier = Modifier.width(12.dp))
-                Text(interval.iconEmoji, style = MaterialTheme.typography.titleLarge)
-                Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(interval.name, style = MaterialTheme.typography.titleMedium)
                     Text(
@@ -377,12 +375,6 @@ fun IntervalItem(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Text("Значок интервала", style = MaterialTheme.typography.labelLarge)
-                WorkoutEmojiPicker(
-                    selected = interval.iconEmoji,
-                    onSelect = { onUpdate(interval.copy(iconEmoji = it)) },
-                    modifier = Modifier.fillMaxWidth()
-                )
                 IconButton(onClick = onDelete) {
                     Icon(
                         Icons.Default.Delete,
@@ -436,12 +428,11 @@ fun IntervalItem(
 @Composable
 fun AddIntervalDialog(
     onDismiss: () -> Unit,
-    onAdd: (String, Int, String, String) -> Unit
+    onAdd: (String, Int, String) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var duration by remember { mutableStateOf("") }
     var selectedColor by remember { mutableStateOf("#FF3B30") }
-    var selectedEmoji by remember { mutableStateOf("⏱️") }
 
     val colors = listOf(
         "#FF3B30" to "Красный",
@@ -497,13 +488,6 @@ fun AddIntervalDialog(
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(12.dp))
-                Text("Значок интервала", style = MaterialTheme.typography.labelLarge)
-                WorkoutEmojiPicker(
-                    selected = selectedEmoji,
-                    onSelect = { selectedEmoji = it },
-                    modifier = Modifier.fillMaxWidth()
-                )
             }
         },
         confirmButton = {
@@ -511,7 +495,7 @@ fun AddIntervalDialog(
                 onClick = {
                     val dur = duration.toIntOrNull() ?: 10
                     if (name.isNotBlank()) {
-                        onAdd(name, dur, selectedColor, selectedEmoji)
+                        onAdd(name, dur, selectedColor)
                     }
                 }
             ) {
