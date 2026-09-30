@@ -44,6 +44,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.async
 import kotlin.math.PI
 import kotlin.math.exp
 import kotlin.math.sin
@@ -222,12 +223,25 @@ class TimerService : Service() {
         if (wakeLock?.isHeld == true) wakeLock?.release()
 
         serviceScope.launch(Dispatchers.IO) {
-            val template = try {
-                dao.getTemplateById(templateId).first()
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to load template $templateId", e)
-                null
+            // ✅ Параллельная загрузка template и intervals — вдвое быстрее
+            val templateDeferred = async {
+                try {
+                    dao.getTemplateById(templateId).first()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to load template $templateId", e)
+                    null
+                }
             }
+            val intervalsDeferred = async {
+                try {
+                    dao.getIntervalsByTemplateId(templateId).first()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to load intervals", e)
+                    emptyList()
+                }
+            }
+
+            val template = templateDeferred.await()
             if (template == null) {
                 Log.e(TAG, "Template $templateId was not found")
                 withContext(Dispatchers.Main) {
@@ -236,23 +250,21 @@ class TimerService : Service() {
                 }
                 return@launch
             }
-            templateAudioUri = template.audioUri
-            templateBackgroundType = template.backgroundType
-            templateBackgroundValue = template.backgroundValue
-            templateVibrationPatternId = template.vibrationPatternId
-            intervals = try {
-                dao.getIntervalsByTemplateId(templateId).first()
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to load intervals", e)
-                emptyList()
-            }
-            if (intervals.isEmpty()) {
+
+            val loadedIntervals = intervalsDeferred.await()
+            if (loadedIntervals.isEmpty()) {
                 withContext(Dispatchers.Main) {
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
                 }
                 return@launch
             }
+
+            templateAudioUri = template.audioUri
+            templateBackgroundType = template.backgroundType
+            templateBackgroundValue = template.backgroundValue
+            templateVibrationPatternId = template.vibrationPatternId
+            intervals = loadedIntervals
 
             activeTemplateId = templateId
             sessionStartedAt = System.currentTimeMillis()
@@ -264,7 +276,7 @@ class TimerService : Service() {
             requestAudioFocus()
             startMusic(intervals.first().audioUri ?: templateAudioUri ?: AppSettingsStore.settings.value.musicUri)
 
-            // Теперь, когда данные загружены — заменяем плейсхолдер на реальное уведомление
+            // Заменяем плейсхолдер на реальное уведомление
             withContext(Dispatchers.Main) {
                 if (activeTemplateId != null) {
                     startForeground(NOTIFICATION_ID, buildNotification())

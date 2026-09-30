@@ -5,6 +5,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -57,7 +60,14 @@ class MainActivity : ComponentActivity() {
                         }
 
                         composable(
-                            route = "${Screen.Execution.route}/{templateId}/{templateName}"
+                            route = "${Screen.Execution.route}/{templateId}/{templateName}",
+                            // ⚠️ Явно задаём короткий transition.
+                            // Дефолтный fade в Navigation Compose = 700 мс, за это время
+                            // оба экрана рендерятся одновременно → фризы.
+                            enterTransition = { fadeIn(tween(180)) },
+                            exitTransition = { fadeOut(tween(150)) },
+                            popEnterTransition = { fadeIn(tween(180)) },
+                            popExitTransition = { fadeOut(tween(150)) }
                         ) { backStackEntry ->
                             val templateId = backStackEntry.arguments
                                 ?.getString("templateId")?.toLongOrNull() ?: 0L
