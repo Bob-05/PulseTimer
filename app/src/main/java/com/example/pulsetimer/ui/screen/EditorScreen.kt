@@ -135,104 +135,130 @@ fun EditorScreen(
             }
         }
     ) { padding ->
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 16.dp)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            selectedTemplate?.let { template ->
+            item {
+                selectedTemplate?.let { template ->
                 var name by remember(template.id) { mutableStateOf(template.name) }
                 var description by remember(template.id) { mutableStateOf(template.description) }
 
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Название шаблона") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = description,
-                    onValueChange = { description = it },
-                    label = { Text("Описание") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text("Персонализация тренировки", style = MaterialTheme.typography.titleMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { imagePicker.launch(arrayOf("image/*")) }) {
-                        Text(if (template.backgroundType == "CUSTOM_IMAGE") "Изменить фон" else "Выбрать фон")
-                    }
-                    if (template.backgroundType != "COLOR") {
-                        Button(onClick = {
-                            viewModel.updateTemplate(template.copy(backgroundType = "COLOR", backgroundValue = ""))
-                        }) { Text("Убрать фон") }
-                    }
-                }
-                Button(onClick = { videoPicker.launch(arrayOf("video/*")) }) {
-                    Text(if (template.backgroundType == "VIDEO") "Изменить видеофон" else "Выбрать видеофон")
-                }
-                Button(onClick = { audioPicker.launch(arrayOf("audio/*")) }) {
-                    Text(if (template.audioUri == null) "Выбрать музыку" else "Изменить музыку")
-                }
-                if (template.audioUri != null) {
-                    Text("Для тренировки выбрана своя музыка", style = MaterialTheme.typography.bodySmall)
-                }
-                Text("Паттерн вибрации", style = MaterialTheme.typography.bodyMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    listOf(0 to "Выкл", 1 to "Стандарт", 2 to "Интенсивный", 3 to "Нарастающий")
-                        .forEach { (patternId, label) ->
-                            androidx.compose.material3.TextButton(
-                                onClick = {
-                                    viewModel.updateTemplate(template.copy(vibrationPatternId = patternId))
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(24.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(20.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text("Параметры тренировки", style = MaterialTheme.typography.titleLarge)
+                            OutlinedTextField(
+                                value = name,
+                                onValueChange = { name = it },
+                                label = { Text("Название тренировки") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            OutlinedTextField(
+                                value = description,
+                                onValueChange = { description = it },
+                                label = { Text("Описание") },
+                                modifier = Modifier.fillMaxWidth(),
+                                minLines = 2,
+                                maxLines = 4
+                            )
+                            Text("Фон", style = MaterialTheme.typography.titleMedium)
+                            Button(
+                                onClick = { imagePicker.launch(arrayOf("image/*")) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(if (template.backgroundType == "CUSTOM_IMAGE") "Выбрать другое изображение" else "Выбрать изображение")
+                            }
+                            Button(
+                                onClick = { videoPicker.launch(arrayOf("video/*")) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(if (template.backgroundType == "VIDEO") "Выбрать другое видео" else "Выбрать видеофон")
+                            }
+                            if (template.backgroundType != "COLOR") {
+                                androidx.compose.material3.OutlinedButton(
+                                    onClick = {
+                                        viewModel.updateTemplate(template.copy(backgroundType = "COLOR", backgroundValue = ""))
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) { Text("Сбросить фон") }
+                            }
+                            Text("Музыка тренировки", style = MaterialTheme.typography.titleMedium)
+                            Button(
+                                onClick = { audioPicker.launch(arrayOf("audio/*")) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(if (template.audioUri == null) "Добавить мелодию" else "Заменить мелодию")
+                            }
+                            if (template.audioUri != null) {
+                                androidx.compose.material3.OutlinedButton(
+                                    onClick = {
+                                        viewModel.updateTemplate(template.copy(audioUri = null))
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = null)
+                                    Text("Удалить мелодию")
                                 }
-                            ) { Text(label) }
+                            }
+                            Text("Вибрация шаблона", style = MaterialTheme.typography.titleMedium)
+                            listOf(0 to "Выключена", 1 to "Стандартная", 2 to "Интенсивная", 3 to "Нарастающая")
+                                .forEach { (patternId, label) ->
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        androidx.compose.material3.RadioButton(
+                                            selected = template.vibrationPatternId == patternId,
+                                            onClick = {
+                                                viewModel.updateTemplate(template.copy(vibrationPatternId = patternId))
+                                            }
+                                        )
+                                        Text(label)
+                                    }
+                                }
+                            Button(
+                                onClick = {
+                                    viewModel.updateTemplate(template.copy(name = name, description = description))
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Сохранить изменения")
+                            }
                         }
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(
-                    onClick = {
-                        viewModel.updateTemplate(template.copy(name = name, description = description))
-                    },
-                    modifier = Modifier.align(Alignment.End)
-                ) {
-                    Text("Сохранить")
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "Интервалы",
-                style = MaterialTheme.typography.titleLarge
-            )
-            Spacer(modifier = Modifier.height(8.dp))
+            item {
+                Text("Интервалы", style = MaterialTheme.typography.titleLarge)
+            }
 
             if (intervals.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("Нет интервалов. Добавьте фазы тренировки.")
+                item {
+                    Text(
+                        "Интервалов пока нет. Добавьте фазы тренировки кнопкой +.",
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(intervals, key = { it.id }) { interval ->
-                        IntervalItem(
-                            interval = interval,
-                            onDelete = { viewModel.deleteInterval(interval) },
-                            onUpdate = viewModel::updateInterval
-                        )
-                    }
+                items(intervals, key = { it.id }) { interval ->
+                    IntervalItem(
+                        interval = interval,
+                        onDelete = { viewModel.deleteInterval(interval) },
+                        onUpdate = viewModel::updateInterval
+                    )
                 }
             }
+            item { Spacer(modifier = Modifier.height(72.dp)) }
         }
     }
 
@@ -289,65 +315,70 @@ fun IntervalItem(
         shape = RoundedCornerShape(12.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .size(24.dp)
-                    .background(parseColor(interval.colorHex), CircleShape)
-            )
-            Spacer(modifier = Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = interval.name,
-                    style = MaterialTheme.typography.titleMedium
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .background(parseColor(interval.colorHex), CircleShape)
                 )
-                Text(
-                    text = "${interval.durationSeconds} сек",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Row {
-                    androidx.compose.material3.TextButton(
-                        onClick = { imagePicker.launch(arrayOf("image/*")) }
-                    ) { Text(if (interval.backgroundType == "CUSTOM_IMAGE") "Сменить фон" else "Фон") }
-                    if (interval.backgroundType == "CUSTOM_IMAGE") {
-                        androidx.compose.material3.TextButton(
-                            onClick = { onUpdate(interval.copy(backgroundType = "COLOR", backgroundValue = "")) }
-                        ) { Text("Убрать") }
-                    }
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(interval.name, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "${interval.durationSeconds} сек",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
-                Row {
-                    androidx.compose.material3.TextButton(
-                        onClick = { videoPicker.launch(arrayOf("video/*")) }
-                    ) { Text(if (interval.backgroundType == "VIDEO") "Сменить видеофон" else "Видеофон") }
-                    if (interval.backgroundType == "VIDEO") {
-                        androidx.compose.material3.TextButton(
-                            onClick = { onUpdate(interval.copy(backgroundType = "COLOR", backgroundValue = "")) }
-                        ) { Text("Убрать") }
-                    }
-                }
-                Row {
-                    androidx.compose.material3.TextButton(
-                        onClick = { audioPicker.launch(arrayOf("audio/*")) }
-                    ) { Text(if (interval.audioUri == null) "Музыка" else "Сменить музыку") }
-                    if (interval.audioUri != null) {
-                        androidx.compose.material3.TextButton(
-                            onClick = { onUpdate(interval.copy(audioUri = null)) }
-                        ) { Text("Убрать") }
-                    }
+                IconButton(onClick = onDelete) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "Удалить интервал",
+                        tint = MaterialTheme.colorScheme.error
+                    )
                 }
             }
-            IconButton(onClick = onDelete) {
-                Icon(
-                    Icons.Default.Delete,
-                    contentDescription = "Удалить",
-                    tint = MaterialTheme.colorScheme.error
-                )
+            androidx.compose.material3.OutlinedButton(
+                onClick = { imagePicker.launch(arrayOf("image/*")) },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (interval.backgroundType == "CUSTOM_IMAGE") "Заменить изображение" else "Выбрать изображение")
+            }
+            if (interval.backgroundType == "CUSTOM_IMAGE") {
+                androidx.compose.material3.TextButton(
+                    onClick = { onUpdate(interval.copy(backgroundType = "COLOR", backgroundValue = "")) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Сбросить изображение") }
+            }
+            androidx.compose.material3.OutlinedButton(
+                onClick = { videoPicker.launch(arrayOf("video/*")) },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (interval.backgroundType == "VIDEO") "Заменить видеофон" else "Выбрать видеофон")
+            }
+            if (interval.backgroundType == "VIDEO") {
+                androidx.compose.material3.TextButton(
+                    onClick = { onUpdate(interval.copy(backgroundType = "COLOR", backgroundValue = "")) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Сбросить видеофон") }
+            }
+            androidx.compose.material3.OutlinedButton(
+                onClick = { audioPicker.launch(arrayOf("audio/*")) },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (interval.audioUri == null) "Добавить мелодию" else "Заменить мелодию")
+            }
+            if (interval.audioUri != null) {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        onUpdate(interval.copy(audioUri = null))
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Удалить мелодию") }
             }
         }
     }

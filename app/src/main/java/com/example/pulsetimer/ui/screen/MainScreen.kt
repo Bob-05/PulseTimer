@@ -28,7 +28,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -82,13 +81,6 @@ fun MainScreen(
                 }
             )
         },
-        floatingActionButton = {
-            FloatingActionButton(onClick = {
-                viewModel.addTemplate("Новый шаблон", "Описание")
-            }) {
-                Icon(Icons.Default.Add, contentDescription = "Добавить шаблон")
-            }
-        }
     ) { padding ->
         Column(
             modifier = Modifier
@@ -96,7 +88,19 @@ fun MainScreen(
                 .padding(padding),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            if (templates.isEmpty()) {
+                androidx.compose.material3.OutlinedButton(
+                    onClick = { viewModel.addTemplate("Новая тренировка", "Добавьте описание") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 12.dp)
+                        .height(52.dp),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Добавить тренировку")
+                }
+                if (templates.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()

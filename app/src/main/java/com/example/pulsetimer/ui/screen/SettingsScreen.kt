@@ -16,12 +16,15 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -129,12 +132,17 @@ fun SettingsScreen(onBack: () -> Unit) {
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        TextButton(onClick = { audioPicker.launch(arrayOf("audio/*")) }) {
+                        Button(onClick = { audioPicker.launch(arrayOf("audio/*")) }) {
                             Text("Выбрать аудио")
                         }
                         if (settings.musicUri != null) {
-                            TextButton(onClick = { AppSettingsStore.update { it.copy(musicUri = null) } }) {
-                                Text("Убрать")
+                            Button(
+                                onClick = {
+                                    AppSettingsStore.update { it.copy(musicUri = null) }
+                                }
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = null)
+                                Text("Удалить мелодию")
                             }
                         }
                     }
@@ -162,10 +170,42 @@ fun SettingsScreen(onBack: () -> Unit) {
             item {
                 ChoiceCard(
                     title = "Тема приложения",
-                    choices = listOf("LIGHT" to "Светлая", "OLED" to "OLED", "GRAY" to "Серая"),
+                    choices = listOf(
+                        "LIGHT" to "Светлая",
+                        "OLED" to "OLED",
+                        "GRAY" to "Серая",
+                        "CUSTOM" to "Своя палитра"
+                    ),
                     selected = settings.theme,
                     onSelected = { updateSettings { copy(theme = it) } }
                 )
+            }
+            if (settings.theme == "CUSTOM") {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Своя палитра цветов", style = MaterialTheme.typography.titleMedium)
+                        PaletteField(
+                            label = "Акцент",
+                            value = settings.customPrimary,
+                            onValueChange = { value -> AppSettingsStore.update { it.copy(customPrimary = value) } }
+                        )
+                        PaletteField(
+                            label = "Фон",
+                            value = settings.customBackground,
+                            onValueChange = { value -> AppSettingsStore.update { it.copy(customBackground = value) } }
+                        )
+                        PaletteField(
+                            label = "Карточки",
+                            value = settings.customSurface,
+                            onValueChange = { value -> AppSettingsStore.update { it.copy(customSurface = value) } }
+                        )
+                        Text(
+                            "Введите HEX-цвет, например #9BB9A8",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
             item {
                 SettingSwitch(
@@ -252,6 +292,11 @@ private fun SessionLogCard(log: SessionLogEntity) {
             Text(log.templateName, style = MaterialTheme.typography.titleMedium)
             Spacer(modifier = Modifier.height(4.dp))
             Text("Дата: ${formatTimestamp(log.startedAt)}", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                if (log.completedAt == null) "Тренировка остановлена" else "Завершена",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             log.completedAt?.let {
                 Text(
                     "Длительность: ${log.totalDurationSeconds} сек",
@@ -262,6 +307,25 @@ private fun SessionLogCard(log: SessionLogEntity) {
         }
     }
 }
+
+@Composable
+private fun PaletteField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = { input ->
+            val digits = input.filter { it.digitToIntOrNull(16) != null }.take(6)
+            onValueChange(if (input.isEmpty()) "" else "#$digits")
+        },
+        label = { Text(label) },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth()
+    )
+}
+
 
 private fun updateSettings(transform: AppSettings.() -> AppSettings) {
     AppSettingsStore.update { it.transform() }

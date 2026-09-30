@@ -8,6 +8,7 @@ import android.app.Service
 import android.animation.ValueAnimator
 import android.content.Context
 import android.content.Intent
+import android.database.sqlite.SQLiteException
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioFocusRequest
@@ -30,6 +31,7 @@ import com.pulsetimer.MainActivity
 import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.data.database.AppDatabase
 import com.pulsetimer.data.entity.IntervalEntity
+import com.pulsetimer.data.entity.SessionLogEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,6 +43,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.PI
 import kotlin.math.exp
 import kotlin.math.sin
@@ -61,6 +64,8 @@ class TimerService : Service() {
     private var templateBackgroundType: String = "COLOR"
     private var templateBackgroundValue: String = ""
     private var templateVibrationPatternId: Int = 1
+    private var activeTemplateId: Long? = null
+    private var sessionStartedAt: Long = 0L
     private var mediaPlayer: MediaPlayer? = null
     private var playingAudioUri: String? = null
     private var toneTrack: AudioTrack? = null
@@ -183,6 +188,9 @@ class TimerService : Service() {
                 return@launch
             }
 
+            activeTemplateId = templateId
+            sessionStartedAt = System.currentTimeMillis()
+
             currentIndex = 0
             isPaused = false
             timeRemaining = intervals.first().durationSeconds.coerceAtLeast(0)
@@ -258,6 +266,7 @@ class TimerService : Service() {
                         if (timeRemaining in 1..3) {
                             playTone(isTransition = false)
                             vibrateForCountdown(currentIntervalEntity.withTemplatePattern())
+                            speakCountdown(timeRemaining)
                         }
                         updateState(
                             state.value.copy(
@@ -305,6 +314,7 @@ class TimerService : Service() {
                             if (timeRemaining in 1..3) {
                                 playTone(isTransition = false)
                                 vibrateForCountdown(currentIntervalEntity.withTemplatePattern())
+                                speakCountdown(timeRemaining)
                             }
                             updateState(
                                 state.value.copy(
@@ -336,10 +346,7 @@ class TimerService : Service() {
         if (wakeLock?.isHeld == true) {
             wakeLock?.release()
         }
-        updateState(ServiceTimerState(isFinished = true))
-        releaseMediaResources()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        persistWorkoutEnd(completed = false)
     }
 
     private fun finishWorkout() {
@@ -347,20 +354,53 @@ class TimerService : Service() {
         if (wakeLock?.isHeld == true) {
             wakeLock?.release()
         }
-        updateState(
-            ServiceTimerState(
-                isRunning = false,
-                isPaused = false,
-                isFinished = true,
-                templateName = templateName,
-                totalIntervals = intervals.size,
-                currentIntervalName = "Готово!",
-                timeRemainingSeconds = 0
-            )
-        )
-        releaseMediaResources()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        persistWorkoutEnd(completed = true)
+    }
+
+    private fun persistWorkoutEnd(completed: Boolean) {
+        val templateId = activeTemplateId
+        val startedAt = sessionStartedAt
+        val workoutName = templateName
+        val intervalCount = intervals.size
+        val remainingSeconds = timeRemaining
+        activeTemplateId = null
+        val completedAt = System.currentTimeMillis()
+        serviceScope.launch(Dispatchers.IO) {
+            if (templateId != null) {
+                try {
+                    dao.insertSessionLog(
+                        SessionLogEntity(
+                            templateId = templateId,
+                            templateName = workoutName,
+                            startedAt = startedAt,
+                            completedAt = if (completed) completedAt else null,
+                            totalDurationSeconds = ((completedAt - startedAt) / 1_000L)
+                                .coerceAtLeast(0L)
+                                .coerceAtMost(Int.MAX_VALUE.toLong())
+                                .toInt()
+                        )
+                    )
+                } catch (error: SQLiteException) {
+                    Log.e("TimerService", "Unable to update the workout history entry", error)
+                }
+            }
+            withContext(Dispatchers.Main) {
+                updateState(
+                    ServiceTimerState(
+                        isRunning = false,
+                        isPaused = false,
+                        isFinished = completed,
+                        templateName = workoutName,
+                        totalIntervals = intervalCount,
+                        currentIntervalName = if (completed) "Готово!" else "Тренировка остановлена",
+                        timeRemainingSeconds = if (completed) 0 else remainingSeconds
+                    )
+                )
+                releaseMediaResources()
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
+        }
     }
 
     private fun createNotificationChannel() {
@@ -665,6 +705,26 @@ class TimerService : Service() {
                 textToSpeech?.speak(name, TextToSpeech.QUEUE_FLUSH, null, "interval-$currentIndex")
             } else {
                 pendingSpeech = name
+            }
+        }
+    }
+
+    private fun speakCountdown(secondsRemaining: Int) {
+        if (!AppSettingsStore.settings.value.voiceEnabled) return
+        val spokenNumber = when (secondsRemaining) {
+            3 -> "Три"
+            2 -> "Два"
+            1 -> "Один"
+            else -> return
+        }
+        mainHandler.post {
+            if (textToSpeechReady) {
+                textToSpeech?.speak(
+                    spokenNumber,
+                    TextToSpeech.QUEUE_FLUSH,
+                    null,
+                    "countdown-$currentIndex-$secondsRemaining"
+                )
             }
         }
     }
