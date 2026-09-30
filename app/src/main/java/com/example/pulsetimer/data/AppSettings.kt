@@ -17,7 +17,8 @@ data class AppSettings(
     val theme: String = "OLED",
     val animatedBackgrounds: Boolean = true,
     val intervalAnimation: String = "SLIDE",
-    val musicUri: String? = null
+    val musicUri: String? = null,
+    val onboardingCompleted: Boolean = false
 )
 
 object AppSettingsStore {
@@ -71,6 +72,7 @@ object AppSettingsStore {
                 putBoolean("animatedBackgrounds", updated.animatedBackgrounds)
                 putString("intervalAnimation", updated.intervalAnimation)
                 putString("musicUri", updated.musicUri)
+                putBoolean("onboardingCompleted", updated.onboardingCompleted)
             }
             mutableSettings.value = updated.copy(soundVolume = updated.soundVolume.coerceIn(0f, 1f))
         }
@@ -86,6 +88,7 @@ object AppSettingsStore {
         theme = prefs.getString("theme", "OLED") ?: "OLED",
         animatedBackgrounds = prefs.getBoolean("animatedBackgrounds", true),
         intervalAnimation = prefs.getString("intervalAnimation", "SLIDE") ?: "SLIDE",
-        musicUri = prefs.getString("musicUri", null)
+        musicUri = prefs.getString("musicUri", null),
+        onboardingCompleted = prefs.getBoolean("onboardingCompleted", false)
     )
 }

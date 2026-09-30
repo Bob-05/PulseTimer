@@ -14,6 +14,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -22,6 +23,7 @@ import com.pulsetimer.ui.navigation.Screen
 import com.pulsetimer.ui.screen.EditorScreen
 import com.pulsetimer.ui.screen.ExecutionScreen
 import com.pulsetimer.ui.screen.MainScreen
+import com.pulsetimer.ui.screen.OnboardingScreen
 import com.pulsetimer.ui.screen.SettingsScreen
 import com.pulsetimer.ui.theme.PulseTimerTheme
 
@@ -38,11 +40,35 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val navController = rememberNavController()
+                    val startDestination = if (settings.onboardingCompleted) {
+                        Screen.Main.route
+                    } else {
+                        Screen.Onboarding.route
+                    }
 
                     NavHost(
                         navController = navController,
-                        startDestination = Screen.Main.route
+                        startDestination = startDestination
                     ) {
+                        composable(Screen.Onboarding.route) {
+                            OnboardingScreen(
+                                onComplete = {
+                                    finishOnboarding(navController) {
+                                        AppSettingsStore.update {
+                                            it.copy(onboardingCompleted = true)
+                                        }
+                                    }
+                                },
+                                onSkip = {
+                                    finishOnboarding(navController) {
+                                        AppSettingsStore.update {
+                                            it.copy(onboardingCompleted = true)
+                                        }
+                                    }
+                                }
+                            )
+                        }
+
                         composable(Screen.Main.route) {
                             MainScreen(
                                 onStartClick = { templateId, templateName ->
@@ -98,12 +124,39 @@ class MainActivity : ComponentActivity() {
 
                         composable(Screen.Settings.route) {
                             SettingsScreen(
-                                onBack = { navController.popBackStack() }
+                                onBack = { navController.popBackStack() },
+                                onShowOnboarding = {
+                                    navController.navigate(Screen.Onboarding.route)
+                                }
                             )
                         }
                     }
                 }
             }
         }
+    }
+}
+
+/**
+ * Завершение онбординга.
+ *
+ * Логика:
+ *  - если онбординг — стартовый экран (первый запуск), стек = [Onboarding].
+ *    previousBackStackEntry == null → navigate(Main) с очисткой Onboarding;
+ *  - если онбординг открыт из настроек, стек = [Main, ..., Settings, Onboarding].
+ *    previousBackStackEntry != null → popBackStack() возвращает в Settings,
+ *    не создавая второй экземпляр Main.
+ */
+private fun finishOnboarding(
+    navController: NavHostController,
+    persist: () -> Unit
+) {
+    persist()
+    if (navController.previousBackStackEntry == null) {
+        navController.navigate(Screen.Main.route) {
+            popUpTo(Screen.Onboarding.route) { inclusive = true }
+        }
+    } else {
+        navController.popBackStack()
     }
 }

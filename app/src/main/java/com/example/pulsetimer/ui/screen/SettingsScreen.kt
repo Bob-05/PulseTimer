@@ -16,9 +16,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
@@ -48,7 +51,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.data.entity.SessionLogEntity
@@ -59,7 +64,10 @@ import java.util.Date
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    onShowOnboarding: () -> Unit
+) {
     val context = LocalContext.current
     val settings by AppSettingsStore.settings.collectAsState()
     val viewModel: TimerViewModel = viewModel()
@@ -247,6 +255,44 @@ fun SettingsScreen(onBack: () -> Unit) {
                         AppSettingsStore.update { it.copy(intervalAnimation = value) }
                     }
                 )
+            }
+
+            item { SectionTitle("Справка") }
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onShowOnboarding,
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("📖", fontSize = 28.sp)
+                        Spacer(Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Обучение",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                "Повторно посмотреть инструкцию по работе с приложением",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
 
             item {
