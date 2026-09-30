@@ -9,6 +9,7 @@ import android.widget.VideoView
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -34,18 +35,21 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -73,6 +77,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -100,11 +105,8 @@ fun ExecutionScreen(
     val timerState by viewModel.timerState.collectAsState()
     val settings by AppSettingsStore.settings.collectAsState()
 
-    // Готовность сервиса: шаблон и интервалы уже загружены из БД
     val isReady = timerState.totalIntervals > 0 && timerState.templateId == templateId
 
-    // Пока не готово — показываем спиннер. Первая реальная композиция AnimatedContent
-    // получит уже корректный PhaseKey, поэтому переход «пусто → реально» не проигрывается.
     if (!isReady) {
         Box(
             modifier = Modifier
@@ -112,10 +114,7 @@ fun ExecutionScreen(
                 .background(Color(0xFF0B0B0B)),
             contentAlignment = Alignment.Center
         ) {
-            CircularProgressIndicator(
-                color = Color.White,
-                strokeWidth = 3.dp
-            )
+            CircularProgressIndicator(color = Color.White, strokeWidth = 3.dp)
         }
         return
     }
@@ -143,10 +142,14 @@ fun ExecutionScreen(
             currentPhaseColor.luminance() > 0.55f
     }
 
+    // Порог свайпа в dp, а не в «сырых» пикселях
+    val density = LocalDensity.current
+    val swipeThresholdPx = with(density) { 56.dp.toPx() }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput(Unit) {
+            .pointerInput(swipeThresholdPx) {
                 var totalDrag = 0f
                 detectHorizontalDragGestures(
                     onDragStart = { totalDrag = 0f },
@@ -155,8 +158,10 @@ fun ExecutionScreen(
                         totalDrag += dragAmount
                     },
                     onDragEnd = {
-                        // Только вперёд — свайп влево
-                        if (totalDrag < -50f) viewModel.skipInterval()
+                        when {
+                            totalDrag < -swipeThresholdPx -> viewModel.skipInterval()
+                            totalDrag > swipeThresholdPx -> viewModel.previousInterval()
+                        }
                     }
                 )
             }
@@ -200,7 +205,7 @@ fun ExecutionScreen(
                     if (timerState.isPaused) viewModel.resumeTimer() else viewModel.pauseTimer()
                 },
                 onSkip = { viewModel.skipInterval() },
-                onStop = { viewModel.stopTimer(); onFinish() },
+                onPrevious = { viewModel.previousInterval() },
                 onFinish = onFinish
             )
         }
@@ -215,18 +220,30 @@ private data class PhaseKey(
     val backgroundValue: String
 )
 
+/**
+ * Анимации переходов. SLIDE (по умолчанию) — это «карточки на весь экран»:
+ * чистый горизонтальный слайд + лёгкий scale уходящей, без fade.
+ */
 private fun phaseTransition(animation: String, direction: Int): ContentTransform {
+    val slideSpec = tween<IntOffset>(
+        durationMillis = 380,
+        easing = FastOutSlowInEasing
+    )
+    val fadeSpec = tween<Float>(
+        durationMillis = 300,
+        easing = FastOutSlowInEasing
+    )
     return when (animation) {
-        "FADE" -> fadeIn(tween(400)) togetherWith fadeOut(tween(400))
+        "FADE" -> fadeIn(fadeSpec) togetherWith fadeOut(fadeSpec)
         "ZOOM" -> (
-                fadeIn(tween(300)) + scaleIn(tween(450), initialScale = 0.85f)
+                fadeIn(fadeSpec) + scaleIn(tween(420), initialScale = 0.86f)
                 ) togetherWith (
-                fadeOut(tween(300)) + scaleOut(tween(450), targetScale = 1.15f)
+                fadeOut(fadeSpec) + scaleOut(tween(420), targetScale = 1.14f)
                 )
         "GLIDE" -> (
-                slideInVertically(tween(450), initialOffsetY = { h -> h * direction }) + fadeIn(tween(300))
+                slideInVertically(slideSpec, initialOffsetY = { h -> h * direction }) + fadeIn(fadeSpec)
                 ) togetherWith (
-                slideOutVertically(tween(450), targetOffsetY = { h -> -h * direction }) + fadeOut(tween(300))
+                slideOutVertically(slideSpec, targetOffsetY = { h -> -h * direction }) + fadeOut(fadeSpec)
                 )
         "BOUNCE" -> {
             val spec: FiniteAnimationSpec<IntOffset> = spring(
@@ -237,9 +254,11 @@ private fun phaseTransition(animation: String, direction: Int): ContentTransform
                     slideOutHorizontally(spec, targetOffsetX = { w -> -w * direction })
         }
         else -> (
-                slideInHorizontally(tween(420), initialOffsetX = { w -> w * direction }) + fadeIn(tween(240))
+                slideInHorizontally(slideSpec, initialOffsetX = { w -> w * direction }) +
+                        scaleIn(tween(380, easing = FastOutSlowInEasing), initialScale = 0.94f)
                 ) togetherWith (
-                slideOutHorizontally(tween(420), targetOffsetX = { w -> -w * direction }) + fadeOut(tween(240))
+                slideOutHorizontally(slideSpec, targetOffsetX = { w -> -w * direction }) +
+                        scaleOut(tween(380, easing = FastOutSlowInEasing), targetScale = 0.94f)
                 )
     }
 }
@@ -256,12 +275,13 @@ private fun PhaseFullScreen(
     onClose: () -> Unit,
     onPauseToggle: () -> Unit,
     onSkip: () -> Unit,
-    onStop: () -> Unit,
+    onPrevious: () -> Unit,
     onFinish: () -> Unit
 ) {
     val phaseColor = parseColor(phase.colorHex)
     val screenWidthDp = LocalConfiguration.current.screenWidthDp.toFloat()
     val timerFontSize = ((screenWidthDp - 48f) / 3.6f).coerceIn(56f, 120f).sp
+    val canGoPrevious = phase.index > 0
 
     Box(modifier = Modifier.fillMaxSize()) {
         when {
@@ -280,7 +300,8 @@ private fun PhaseFullScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp),
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(horizontal = 24.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
@@ -344,13 +365,23 @@ private fun PhaseFullScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(
-                        onClick = onStop,
+                        onClick = onPrevious,
+                        enabled = canGoPrevious,
                         modifier = Modifier
                             .size(64.dp)
-                            .background(Color.White.copy(alpha = 0.2f), CircleShape)
+                            .background(
+                                Color.White.copy(alpha = if (canGoPrevious) 0.2f else 0.08f),
+                                CircleShape
+                            )
                     ) {
-                        Icon(Icons.Default.Stop, "Стоп", tint = Color.White, modifier = Modifier.size(32.dp))
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Предыдущий интервал",
+                            tint = Color.White.copy(alpha = if (canGoPrevious) 1f else 0.35f),
+                            modifier = Modifier.size(32.dp)
+                        )
                     }
+
                     IconButton(
                         onClick = onPauseToggle,
                         modifier = Modifier
@@ -364,6 +395,7 @@ private fun PhaseFullScreen(
                             modifier = Modifier.size(40.dp)
                         )
                     }
+
                     IconButton(
                         onClick = onSkip,
                         modifier = Modifier
@@ -371,15 +403,17 @@ private fun PhaseFullScreen(
                             .background(Color.White.copy(alpha = 0.2f), CircleShape)
                     ) {
                         Icon(
-                            Icons.Default.KeyboardArrowRight, "Пропустить",
-                            tint = Color.White, modifier = Modifier.size(32.dp)
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = "Пропустить",
+                            tint = Color.White,
+                            modifier = Modifier.size(32.dp)
                         )
                     }
                 }
             }
 
             Text(
-                text = "Свайп влево — пропустить интервал",
+                text = "Свайп влево/вправо — перелистывание",
                 color = Color.White.copy(alpha = 0.6f),
                 style = MaterialTheme.typography.labelLarge
             )
@@ -413,9 +447,6 @@ private fun PhaseImageBackground(uri: String, fallbackColor: Color) {
     }
 }
 
-/**
- * Загружает bitmap с понижением разрешения, чтобы избежать OOM на больших картинках.
- */
 private fun decodeSampledBitmap(
     context: android.content.Context,
     uri: String,

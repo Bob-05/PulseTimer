@@ -124,6 +124,15 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    fun previousInterval() {
+        val context = getApplication<Application>()
+        context.startForegroundService(
+            Intent(context, TimerService::class.java).apply {
+                action = TimerService.ACTION_PREVIOUS
+            }
+        )
+    }
+
     fun stopTimer() {
         val context = getApplication<Application>()
         context.startForegroundService(

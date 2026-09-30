@@ -36,6 +36,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,7 +45,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.async
 import kotlin.math.PI
 import kotlin.math.exp
 import kotlin.math.sin
@@ -100,6 +100,7 @@ class TimerService : Service() {
         const val ACTION_PAUSE = "com.pulsetimer.action.PAUSE"
         const val ACTION_RESUME = "com.pulsetimer.action.RESUME"
         const val ACTION_SKIP = "com.pulsetimer.action.SKIP"
+        const val ACTION_PREVIOUS = "com.pulsetimer.action.PREVIOUS"
         const val ACTION_STOP = "com.pulsetimer.action.STOP"
 
         const val EXTRA_TEMPLATE_ID = "extra_template_id"
@@ -161,8 +162,6 @@ class TimerService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // ★ КРИТИЧНО: должен быть вызван синхронно и до любого I/O,
-        // иначе OS выбросит ForegroundServiceDidNotStartInTimeException.
         val isNewSession = intent?.action == ACTION_START
         startForeground(NOTIFICATION_ID, buildForegroundNotification(isNewSession))
 
@@ -175,6 +174,7 @@ class TimerService : Service() {
             ACTION_PAUSE -> pauseTimer()
             ACTION_RESUME -> resumeTimer()
             ACTION_SKIP -> skipInterval()
+            ACTION_PREVIOUS -> previousInterval()
             ACTION_STOP -> stopTimer()
         }
         return START_NOT_STICKY
@@ -185,10 +185,6 @@ class TimerService : Service() {
         Log.i(TAG, "Task removed — timer keeps running")
     }
 
-    /**
-     * Возвращает «реальное» уведомление, если сессия уже идёт и данные загружены,
-     * иначе — плейсхолдер, чтобы успеть зарегистрироваться в foreground за 5 секунд.
-     */
     private fun buildForegroundNotification(isNewSession: Boolean): Notification {
         return if (!isNewSession && activeTemplateId != null && intervals.isNotEmpty()) {
             buildNotification()
@@ -223,7 +219,7 @@ class TimerService : Service() {
         if (wakeLock?.isHeld == true) wakeLock?.release()
 
         serviceScope.launch(Dispatchers.IO) {
-            // ✅ Параллельная загрузка template и intervals — вдвое быстрее
+            // Параллельная загрузка template и intervals
             val templateDeferred = async {
                 try {
                     dao.getTemplateById(templateId).first()
@@ -276,7 +272,6 @@ class TimerService : Service() {
             requestAudioFocus()
             startMusic(intervals.first().audioUri ?: templateAudioUri ?: AppSettingsStore.settings.value.musicUri)
 
-            // Заменяем плейсхолдер на реальное уведомление
             withContext(Dispatchers.Main) {
                 if (activeTemplateId != null) {
                     startForeground(NOTIFICATION_ID, buildNotification())
@@ -437,6 +432,14 @@ class TimerService : Service() {
     private fun skipInterval() {
         timerJob?.cancel()
         currentIndex++
+        runInterval()
+    }
+
+    private fun previousInterval() {
+        // На первом интервале возвращаться некуда
+        if (currentIndex <= 0) return
+        timerJob?.cancel()
+        currentIndex--
         runInterval()
     }
 
@@ -624,8 +627,6 @@ class TimerService : Service() {
         }
     }
 
-    // === Safe MediaPlayer helpers (защита от краха после release()) ===
-
     private val MediaPlayer?.safeIsPlaying: Boolean
         get() = try { this?.isPlaying == true } catch (_: IllegalStateException) { false }
 
@@ -656,8 +657,6 @@ class TimerService : Service() {
         try { p.reset() } catch (_: IllegalStateException) { }
         try { p.release() } catch (_: IllegalStateException) { }
     }
-
-    // === Vibration ===
 
     private fun buildVibrationEffect(timings: LongArray, amplitudes: IntArray): VibrationEffect {
         return if (vibrator.hasAmplitudeControl()) {
@@ -721,8 +720,6 @@ class TimerService : Service() {
             else -> 170
         }
     }
-
-    // === Tone (USAGE_MEDIA — не глушится системным потоком) ===
 
     private fun playTone(isTransition: Boolean) {
         val settings = AppSettingsStore.settings.value
