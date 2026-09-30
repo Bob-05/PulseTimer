@@ -9,11 +9,13 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -38,8 +40,12 @@ import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -57,6 +63,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -191,6 +198,14 @@ fun ExecutionScreen(
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                val intervalCardRotation by animateFloatAsState(
+                    targetValue = timerState.currentIntervalIndex * 360f,
+                    animationSpec = tween(
+                        durationMillis = 650,
+                        easing = FastOutSlowInEasing
+                    ),
+                    label = "interval_card_rotation"
+                )
                 AnimatedContent(
                     targetState = IntervalLabel(
                         index = timerState.currentIntervalIndex,
@@ -198,34 +213,41 @@ fun ExecutionScreen(
                         total = timerState.totalIntervals
                     ),
                     transitionSpec = {
-                        val movingForward = targetState.index > initialState.index
-                        val enterOffset = if (movingForward) 1 else -1
-                        (
-                            slideInHorizontally(
-                                initialOffsetX = { width -> width * enterOffset },
-                                animationSpec = tween(durationMillis = 350)
-                            ) + fadeIn(animationSpec = tween(durationMillis = 250))
-                        ).togetherWith(
-                            slideOutHorizontally(
-                                targetOffsetX = { width -> -width * enterOffset },
-                                animationSpec = tween(durationMillis = 350)
-                            ) + fadeOut(animationSpec = tween(durationMillis = 250))
-                        )
+                        (fadeIn(animationSpec = tween(200)) + scaleIn(initialScale = 0.85f))
+                            .togetherWith(
+                                fadeOut(animationSpec = tween(200)) + scaleOut(targetScale = 0.85f)
+                            )
                     },
                     label = "interval_page"
                 ) { label ->
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = label.name,
-                            color = Color.White,
-                            style = MaterialTheme.typography.headlineLarge,
-                            textAlign = TextAlign.Center
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .graphicsLayer { rotationZ = intervalCardRotation },
+                        shape = RoundedCornerShape(24.dp),
+                        border = BorderStroke(1.5.dp, Color.White.copy(alpha = 0.72f)),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color.Black.copy(alpha = 0.24f)
                         )
-                        Text(
-                            text = "Интервал ${label.index + 1} из ${label.total}",
-                            color = Color.White.copy(alpha = 0.8f),
-                            style = MaterialTheme.typography.bodyLarge
-                        )
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 24.dp, vertical = 20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = label.name,
+                                color = Color.White,
+                                style = MaterialTheme.typography.headlineLarge,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = "Интервал ${label.index + 1} из ${label.total}",
+                                color = Color.White.copy(alpha = 0.8f),
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
                     }
                 }
                 Spacer(modifier = Modifier.height(16.dp))

@@ -43,24 +43,12 @@ private val GrayColorScheme = darkColorScheme(
 @Composable
 fun PulseTimerTheme(
     themeName: String = "OLED",
-    customPrimary: String = "#9BB9A8",
-    customBackground: String = "#181A1B",
-    customSurface: String = "#25292A",
     content: @Composable () -> Unit
 ) {
     val selectedTheme = themeName
     val colorScheme = when (selectedTheme) {
         "LIGHT" -> LightColorScheme
         "GRAY" -> GrayColorScheme
-        "CUSTOM" -> DarkColorScheme.copy(
-            primary = parsePaletteColor(customPrimary, Color(0xFF9BB9A8)),
-            secondary = parsePaletteColor(customPrimary, Color(0xFF9BB9A8)),
-            background = parsePaletteColor(customBackground, Color(0xFF181A1B)),
-            surface = parsePaletteColor(customSurface, Color(0xFF25292A)),
-            surfaceVariant = parsePaletteColor(customSurface, Color(0xFF25292A)).copy(alpha = 0.85f),
-            onBackground = Color.White,
-            onSurface = Color.White
-        )
         else -> DarkColorScheme.copy(
             background = Color(0xFF000000),
             surface = Color(0xFF1C1C1E),
@@ -86,14 +74,4 @@ fun PulseTimerTheme(
         typography = Typography,
         content = content
     )
-}
-
-private fun parsePaletteColor(value: String, fallback: Color): Color {
-    if (!isValidPaletteColor(value)) return fallback
-    return Color(android.graphics.Color.parseColor(value))
-}
-
-internal fun isValidPaletteColor(value: String): Boolean {
-    if ((value.length != 7 && value.length != 9) || value[0] != '#') return false
-    return value.drop(1).all { it.digitToIntOrNull(16) != null }
 }

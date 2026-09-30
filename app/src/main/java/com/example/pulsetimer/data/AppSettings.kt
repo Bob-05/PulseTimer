@@ -15,10 +15,7 @@ data class AppSettings(
     val vibrationProfile: String = "SPORT",
     val theme: String = "OLED",
     val animatedBackgrounds: Boolean = true,
-    val musicUri: String? = null,
-    val customPrimary: String = "#9BB9A8",
-    val customBackground: String = "#181A1B",
-    val customSurface: String = "#25292A"
+    val musicUri: String? = null
 )
 
 object AppSettingsStore {
@@ -35,7 +32,21 @@ object AppSettingsStore {
                     PREFERENCES_NAME,
                     Context.MODE_PRIVATE
                 )
-                mutableSettings.value = readSettings(preferences!!)
+                val prefs = preferences!!
+                val hadCustomPalette = prefs.contains("customPrimary") ||
+                    prefs.contains("customBackground") ||
+                    prefs.contains("customSurface")
+                if (prefs.getString("theme", "OLED") == "CUSTOM" || hadCustomPalette) {
+                    val editor = prefs.edit()
+                        .remove("customPrimary")
+                        .remove("customBackground")
+                        .remove("customSurface")
+                    if (prefs.getString("theme", "OLED") == "CUSTOM") {
+                        editor.putString("theme", "OLED")
+                    }
+                    check(editor.commit()) { "Unable to remove legacy custom palette settings" }
+                }
+                mutableSettings.value = readSettings(prefs)
             }
         }
         return this
@@ -57,9 +68,6 @@ object AppSettingsStore {
                 .putString("theme", updated.theme)
                 .putBoolean("animatedBackgrounds", updated.animatedBackgrounds)
                 .putString("musicUri", updated.musicUri)
-                .putString("customPrimary", updated.customPrimary)
-                .putString("customBackground", updated.customBackground)
-                .putString("customSurface", updated.customSurface)
                 .commit()) { "Unable to save PulseTimer settings" }
             mutableSettings.value = updated.copy(soundVolume = updated.soundVolume.coerceIn(0f, 1f))
         }
@@ -74,9 +82,6 @@ object AppSettingsStore {
         vibrationProfile = prefs.getString("vibrationProfile", "SPORT") ?: "SPORT",
         theme = prefs.getString("theme", "OLED") ?: "OLED",
         animatedBackgrounds = prefs.getBoolean("animatedBackgrounds", true),
-        musicUri = prefs.getString("musicUri", null),
-        customPrimary = prefs.getString("customPrimary", "#9BB9A8") ?: "#9BB9A8",
-        customBackground = prefs.getString("customBackground", "#181A1B") ?: "#181A1B",
-        customSurface = prefs.getString("customSurface", "#25292A") ?: "#25292A"
+        musicUri = prefs.getString("musicUri", null)
     )
 }

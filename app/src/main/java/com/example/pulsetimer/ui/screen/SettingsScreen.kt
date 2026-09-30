@@ -25,7 +25,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -179,39 +178,11 @@ fun SettingsScreen(onBack: () -> Unit) {
                     choices = listOf(
                         "LIGHT" to "Светлая",
                         "OLED" to "OLED",
-                        "GRAY" to "Серая",
-                        "CUSTOM" to "Своя палитра"
+                        "GRAY" to "Серая"
                     ),
                     selected = settings.theme,
                     onSelected = { updateSettings { copy(theme = it) } }
                 )
-            }
-            if (settings.theme == "CUSTOM") {
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Своя палитра цветов", style = MaterialTheme.typography.titleMedium)
-                        PaletteField(
-                            label = "Акцент",
-                            value = settings.customPrimary,
-                            onValueChange = { value -> AppSettingsStore.update { it.copy(customPrimary = value) } }
-                        )
-                        PaletteField(
-                            label = "Фон",
-                            value = settings.customBackground,
-                            onValueChange = { value -> AppSettingsStore.update { it.copy(customBackground = value) } }
-                        )
-                        PaletteField(
-                            label = "Карточки",
-                            value = settings.customSurface,
-                            onValueChange = { value -> AppSettingsStore.update { it.copy(customSurface = value) } }
-                        )
-                        Text(
-                            "Введите HEX-цвет, например #9BB9A8",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
             }
             item {
                 SettingSwitch(
@@ -374,25 +345,6 @@ private fun SessionLogCard(log: SessionLogEntity, onDelete: () -> Unit) {
         }
     }
 }
-
-@Composable
-private fun PaletteField(
-    label: String,
-    value: String,
-    onValueChange: (String) -> Unit
-) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = { input ->
-            val digits = input.filter { it.digitToIntOrNull(16) != null }.take(6)
-            onValueChange(if (input.isEmpty()) "" else "#$digits")
-        },
-        label = { Text(label) },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth()
-    )
-}
-
 
 private fun updateSettings(transform: AppSettings.() -> AppSettings) {
     AppSettingsStore.update { it.transform() }

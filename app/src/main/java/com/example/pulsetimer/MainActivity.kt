@@ -28,12 +28,7 @@ class MainActivity : ComponentActivity() {
         AppSettingsStore.initialize(this)
         setContent {
             val settings by AppSettingsStore.settings.collectAsState()
-            PulseTimerTheme(
-                themeName = settings.theme,
-                customPrimary = settings.customPrimary,
-                customBackground = settings.customBackground,
-                customSurface = settings.customSurface
-            ) {
+            PulseTimerTheme(themeName = settings.theme) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
