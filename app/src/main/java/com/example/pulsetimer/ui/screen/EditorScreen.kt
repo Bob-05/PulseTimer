@@ -14,6 +14,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -67,7 +68,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -516,120 +516,122 @@ fun IntervalItem(
         }
     }
 
-    // Box + Modifier.shadow вместо Card — чтобы не было «серых углов» на светлой теме
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .animateContentSize()
-            .shadow(
-                elevation = 8.dp,
-                shape = RoundedCornerShape(22.dp),
-                ambientColor = accent.copy(alpha = 0.35f),
-                spotColor = accent.copy(alpha = 0.45f)
-            )
-            .clip(RoundedCornerShape(22.dp))
-            .background(
-                Brush.linearGradient(
-                    colors = listOf(
-                        accent.copy(alpha = 0.30f),
-                        accent.copy(alpha = 0.10f),
-                        MaterialTheme.colorScheme.surface
-                    ),
-                    start = Offset.Zero,
-                    end = Offset(700f, 500f)
-                )
-            )
+    // Card отвечает за elevation и правильный клип формы — на светлой теме
+    // не остаётся прямоугольной тени по углам.
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent)
     ) {
         Box(
             modifier = Modifier
-                .align(Alignment.CenterStart)
-                .width(6.dp)
-                .height(72.dp)
-                .background(accent, RoundedCornerShape(topEnd = 6.dp, bottomEnd = 6.dp))
-        )
-        Column(
-            modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 20.dp, end = 16.dp, top = 16.dp, bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+                .animateContentSize()
+                .clip(RoundedCornerShape(22.dp))
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            accent.copy(alpha = 0.30f),
+                            accent.copy(alpha = 0.10f),
+                            MaterialTheme.colorScheme.surface
+                        ),
+                        start = Offset.Zero,
+                        end = Offset(700f, 500f)
+                    )
+                )
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .background(
-                            Brush.radialGradient(
-                                colors = listOf(accent, accent.copy(alpha = 0.55f))
-                            ),
-                            CircleShape
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .width(6.dp)
+                    .height(72.dp)
+                    .background(accent, RoundedCornerShape(topEnd = 6.dp, bottomEnd = 6.dp))
+            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 16.dp, top = 16.dp, bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .background(
+                                Brush.radialGradient(
+                                    colors = listOf(accent, accent.copy(alpha = 0.55f))
+                                ),
+                                CircleShape
+                            )
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            interval.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
                         )
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "${interval.durationSeconds} сек",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(onClick = onDelete) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "Удалить интервал",
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+                androidx.compose.material3.OutlinedButton(
+                    onClick = { imagePicker.launch(arrayOf("image/*")) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Text(
-                        interval.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        "${interval.durationSeconds} сек",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        if (interval.backgroundType == "CUSTOM_IMAGE")
+                            "Заменить изображение"
+                        else "Выбрать изображение"
                     )
                 }
-                IconButton(onClick = onDelete) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = "Удалить интервал",
-                        tint = MaterialTheme.colorScheme.error
+                if (interval.backgroundType == "CUSTOM_IMAGE") {
+                    androidx.compose.material3.TextButton(
+                        onClick = { onUpdate(interval.copy(backgroundType = "COLOR", backgroundValue = "")) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Сбросить изображение") }
+                }
+                androidx.compose.material3.OutlinedButton(
+                    onClick = { videoPicker.launch(arrayOf("video/*")) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        if (interval.backgroundType == "VIDEO")
+                            "Заменить видеофон"
+                        else "Выбрать видеофон"
                     )
                 }
-            }
-            androidx.compose.material3.OutlinedButton(
-                onClick = { imagePicker.launch(arrayOf("image/*")) },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    if (interval.backgroundType == "CUSTOM_IMAGE")
-                        "Заменить изображение"
-                    else "Выбрать изображение"
-                )
-            }
-            if (interval.backgroundType == "CUSTOM_IMAGE") {
-                androidx.compose.material3.TextButton(
-                    onClick = { onUpdate(interval.copy(backgroundType = "COLOR", backgroundValue = "")) },
+                if (interval.backgroundType == "VIDEO") {
+                    androidx.compose.material3.TextButton(
+                        onClick = { onUpdate(interval.copy(backgroundType = "COLOR", backgroundValue = "")) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Сбросить видеофон") }
+                }
+                androidx.compose.material3.OutlinedButton(
+                    onClick = { audioPicker.launch(arrayOf("audio/*")) },
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("Сбросить изображение") }
-            }
-            androidx.compose.material3.OutlinedButton(
-                onClick = { videoPicker.launch(arrayOf("video/*")) },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    if (interval.backgroundType == "VIDEO")
-                        "Заменить видеофон"
-                    else "Выбрать видеофон"
-                )
-            }
-            if (interval.backgroundType == "VIDEO") {
-                androidx.compose.material3.TextButton(
-                    onClick = { onUpdate(interval.copy(backgroundType = "COLOR", backgroundValue = "")) },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Сбросить видеофон") }
-            }
-            androidx.compose.material3.OutlinedButton(
-                onClick = { audioPicker.launch(arrayOf("audio/*")) },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    if (interval.audioUri == null) "Добавить мелодию" else "Заменить мелодию"
-                )
-            }
-            if (interval.audioUri != null) {
-                androidx.compose.material3.TextButton(
-                    onClick = { onUpdate(interval.copy(audioUri = null)) },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Удалить мелодию") }
+                ) {
+                    Text(
+                        if (interval.audioUri == null) "Добавить мелодию" else "Заменить мелодию"
+                    )
+                }
+                if (interval.audioUri != null) {
+                    androidx.compose.material3.TextButton(
+                        onClick = { onUpdate(interval.copy(audioUri = null)) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Удалить мелодию") }
+                }
             }
         }
     }
@@ -672,29 +674,60 @@ fun AddIntervalDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(16.dp))
-                Text("Цвет фона", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    text = "Цвет фона: ${
+                        colors.firstOrNull { it.first == selectedColor }?.second ?: "—"
+                    }",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
                     colors.forEach { (hex, label) ->
+                        val isSelected = selectedColor == hex
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Box(
                                 modifier = Modifier
-                                    .size(40.dp)
-                                    .background(parseColor(hex), CircleShape)
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .background(parseColor(hex))
                                     .then(
-                                        if (selectedColor == hex) {
-                                            Modifier.background(Color.Black.copy(alpha = 0.3f), CircleShape)
+                                        if (isSelected) {
+                                            Modifier.border(
+                                                width = 3.dp,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                shape = CircleShape
+                                            )
                                         } else {
                                             Modifier
                                         }
                                     )
-                                    .clickable { selectedColor = hex }
+                                    .clickable { selectedColor = hex },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "Выбран",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = label,
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (isSelected) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                }
                             )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(label, fontSize = 10.sp)
                         }
                     }
                 }

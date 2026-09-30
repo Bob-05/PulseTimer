@@ -5,6 +5,9 @@ import android.text.format.DateFormat
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -39,26 +42,32 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.data.entity.SessionLogEntity
 import com.pulsetimer.viewmodel.TimerViewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.Date
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun SettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val settings by AppSettingsStore.settings.collectAsState()
     val viewModel: TimerViewModel = viewModel()
     val logs by viewModel.sessionLogs.collectAsState()
+    val scope = rememberCoroutineScope()
     var showClearHistoryConfirmation by remember { mutableStateOf(false) }
     var pendingDeleteLog by remember { mutableStateOf<SessionLogEntity?>(null) }
+    var deletingLogId by remember { mutableStateOf<Long?>(null) }
 
     val audioPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -76,7 +85,6 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
     }
 
-    // Локальный стейт слайдера — плавное перетаскивание, сохранение по окончании
     var localVolume by remember(settings.soundVolume) {
         mutableFloatStateOf(settings.soundVolume)
     }
@@ -120,7 +128,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
             item {
-                Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                Column(modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)) {
                     Text("Громкость сигналов: ${(localVolume * 100).toInt()}%")
                     Slider(
                         value = localVolume,
@@ -147,7 +157,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
             item {
-                Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                Column(modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)) {
                     Text(
                         text = if (settings.musicUri == null)
                             "Фоновая музыка не выбрана"
@@ -260,8 +272,32 @@ fun SettingsScreen(onBack: () -> Unit) {
                     )
                 }
             } else {
-                items(logs, key = SessionLogEntity::id) { log ->
-                    SessionLogCard(log = log, onDelete = { pendingDeleteLog = log })
+                items(
+                    items = logs,
+                    key = SessionLogEntity::id
+                ) { log ->
+                    val isDeleting = deletingLogId == log.id
+                    val scale by animateFloatAsState(
+                        targetValue = if (isDeleting) 0.7f else 1f,
+                        animationSpec = tween(durationMillis = 280),
+                        label = "log_scale_${log.id}"
+                    )
+                    val alpha by animateFloatAsState(
+                        targetValue = if (isDeleting) 0f else 1f,
+                        animationSpec = tween(durationMillis = 280),
+                        label = "log_alpha_${log.id}"
+                    )
+                    SessionLogCard(
+                        log = log,
+                        onDelete = { pendingDeleteLog = log },
+                        modifier = Modifier
+                            .animateItem()
+                            .graphicsLayer {
+                                scaleX = scale
+                                scaleY = scale
+                                this.alpha = alpha
+                            }
+                    )
                 }
             }
             item { Spacer(modifier = Modifier.height(16.dp)) }
@@ -272,11 +308,18 @@ fun SettingsScreen(onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { pendingDeleteLog = null },
             title = { Text("Удалить запись?") },
-            text = { Text("Запись тренировки «${log.templateName}» будет удалена без возможности восстановления.") },
+            text = {
+                Text("Запись тренировки «${log.templateName}» будет удалена без возможности восстановления.")
+            },
             confirmButton = {
                 TextButton(onClick = {
-                    viewModel.deleteSessionLog(log)
                     pendingDeleteLog = null
+                    deletingLogId = log.id
+                    scope.launch {
+                        delay(280)
+                        viewModel.deleteSessionLog(log)
+                        deletingLogId = null
+                    }
                 }) { Text("Удалить") }
             },
             dismissButton = {
@@ -319,7 +362,9 @@ private fun SettingSwitch(
     subtitle: String? = null
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
@@ -337,7 +382,9 @@ private fun ChoiceCard(
     selected: String,
     onSelected: (String) -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+    Column(modifier = Modifier
+        .fillMaxWidth()
+        .padding(vertical = 8.dp)) {
         Text(title, style = MaterialTheme.typography.bodyLarge)
         choices.forEach { (value, label) ->
             Row(
@@ -352,9 +399,13 @@ private fun ChoiceCard(
 }
 
 @Composable
-private fun SessionLogCard(log: SessionLogEntity, onDelete: () -> Unit) {
+private fun SessionLogCard(
+    log: SessionLogEntity,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
