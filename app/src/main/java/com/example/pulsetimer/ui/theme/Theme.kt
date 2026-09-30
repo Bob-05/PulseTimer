@@ -45,8 +45,7 @@ fun PulseTimerTheme(
     themeName: String = "OLED",
     content: @Composable () -> Unit
 ) {
-    val selectedTheme = themeName
-    val colorScheme = when (selectedTheme) {
+    val colorScheme = when (themeName) {
         "LIGHT" -> LightColorScheme
         "GRAY" -> GrayColorScheme
         else -> DarkColorScheme.copy(
@@ -65,7 +64,7 @@ fun PulseTimerTheme(
             val window = (view.context as Activity).window
             window.statusBarColor = colorScheme.background.toArgb()
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars =
-                selectedTheme == "LIGHT"
+                themeName == "LIGHT"
         }
     }
 

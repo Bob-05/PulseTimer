@@ -4,11 +4,17 @@ import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,46 +28,63 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pulsetimer.data.entity.IntervalEntity
 import com.pulsetimer.viewmodel.TimerViewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.absoluteValue
+
+private enum class SaveButtonState { Idle, Saving, Success }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -73,6 +96,25 @@ fun EditorScreen(
     val selectedTemplate by viewModel.selectedTemplate.collectAsState()
     val intervals by viewModel.selectedTemplateIntervals.collectAsState()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var name by remember(templateId) { mutableStateOf("") }
+    var description by remember(templateId) { mutableStateOf("") }
+    var initialized by remember(templateId) { mutableStateOf(false) }
+    var saveButtonState by remember { mutableStateOf(SaveButtonState.Idle) }
+
+    LaunchedEffect(templateId) {
+        viewModel.selectTemplate(templateId)
+    }
+
+    LaunchedEffect(selectedTemplate?.id) {
+        val template = selectedTemplate
+        if (!initialized && template != null) {
+            name = template.name
+            description = template.description
+            initialized = true
+        }
+    }
 
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -82,7 +124,9 @@ fun EditorScreen(
                     Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
                 selectedTemplate?.let {
-                    viewModel.updateTemplate(it.copy(backgroundType = "CUSTOM_IMAGE", backgroundValue = uri.toString()))
+                    viewModel.updateTemplate(
+                        it.copy(backgroundType = "CUSTOM_IMAGE", backgroundValue = uri.toString())
+                    )
                 }
             } catch (error: SecurityException) {
                 Toast.makeText(context, "Не удалось сохранить доступ к изображению", Toast.LENGTH_LONG).show()
@@ -92,9 +136,14 @@ fun EditorScreen(
     val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             try {
-                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
                 selectedTemplate?.let {
-                    viewModel.updateTemplate(it.copy(backgroundType = "VIDEO", backgroundValue = uri.toString()))
+                    viewModel.updateTemplate(
+                        it.copy(backgroundType = "VIDEO", backgroundValue = uri.toString())
+                    )
                 }
             } catch (error: SecurityException) {
                 Toast.makeText(context, "Не удалось сохранить доступ к видео", Toast.LENGTH_LONG).show()
@@ -115,10 +164,6 @@ fun EditorScreen(
         }
     }
 
-    LaunchedEffect(templateId) {
-        viewModel.selectTemplate(templateId)
-    }
-
     var showAddDialog by remember { mutableStateOf(false) }
     val intervalsListState = rememberLazyListState()
 
@@ -136,9 +181,47 @@ fun EditorScreen(
                 }
             )
         },
-        floatingActionButton = {
-            FloatingActionButton(onClick = { showAddDialog = true }) {
-                Icon(Icons.Default.Add, contentDescription = "Добавить интервал")
+        bottomBar = {
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 3.dp,
+                shadowElevation = 12.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SaveTemplateButton(
+                        state = saveButtonState,
+                        enabled = selectedTemplate != null,
+                        onClick = {
+                            val template = selectedTemplate ?: return@SaveTemplateButton
+                            if (saveButtonState != SaveButtonState.Idle) return@SaveTemplateButton
+                            scope.launch {
+                                saveButtonState = SaveButtonState.Saving
+                                viewModel.updateTemplate(
+                                    template.copy(
+                                        name = name.trim().ifEmpty { template.name },
+                                        description = description.trim()
+                                    )
+                                )
+                                delay(700)
+                                saveButtonState = SaveButtonState.Success
+                                delay(1600)
+                                saveButtonState = SaveButtonState.Idle
+                            }
+                        }
+                    )
+                    FloatingActionButton(
+                        onClick = { showAddDialog = true },
+                        containerColor = MaterialTheme.colorScheme.primary
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "Добавить интервал")
+                    }
+                }
             }
         }
     ) { padding ->
@@ -152,16 +235,15 @@ fun EditorScreen(
         ) {
             item {
                 selectedTemplate?.let { template ->
-                var name by remember(template.id) { mutableStateOf(template.name) }
-                var description by remember(template.id) { mutableStateOf(template.description) }
-
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(24.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                     ) {
                         Column(
-                            modifier = Modifier.fillMaxWidth().padding(20.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(20.dp),
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Text("Параметры тренировки", style = MaterialTheme.typography.titleLarge)
@@ -193,18 +275,28 @@ fun EditorScreen(
                                 onClick = { imagePicker.launch(arrayOf("image/*")) },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text(if (template.backgroundType == "CUSTOM_IMAGE") "Выбрать другое изображение" else "Выбрать изображение")
+                                Text(
+                                    if (template.backgroundType == "CUSTOM_IMAGE")
+                                        "Выбрать другое изображение"
+                                    else "Выбрать изображение"
+                                )
                             }
                             Button(
                                 onClick = { videoPicker.launch(arrayOf("video/*")) },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text(if (template.backgroundType == "VIDEO") "Выбрать другое видео" else "Выбрать видеофон")
+                                Text(
+                                    if (template.backgroundType == "VIDEO")
+                                        "Выбрать другое видео"
+                                    else "Выбрать видеофон"
+                                )
                             }
                             if (template.backgroundType != "COLOR") {
                                 androidx.compose.material3.OutlinedButton(
                                     onClick = {
-                                        viewModel.updateTemplate(template.copy(backgroundType = "COLOR", backgroundValue = ""))
+                                        viewModel.updateTemplate(
+                                            template.copy(backgroundType = "COLOR", backgroundValue = "")
+                                        )
                                     },
                                     modifier = Modifier.fillMaxWidth()
                                 ) { Text("Сбросить фон") }
@@ -214,7 +306,11 @@ fun EditorScreen(
                                 onClick = { audioPicker.launch(arrayOf("audio/*")) },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text(if (template.audioUri == null) "Добавить мелодию" else "Заменить мелодию")
+                                Text(
+                                    if (template.audioUri == null)
+                                        "Добавить мелодию"
+                                    else "Заменить мелодию"
+                                )
                             }
                             if (template.audioUri != null) {
                                 androidx.compose.material3.OutlinedButton(
@@ -228,25 +324,21 @@ fun EditorScreen(
                                 }
                             }
                             Text("Вибрация шаблона", style = MaterialTheme.typography.titleMedium)
-                            listOf(0 to "Выключена", 1 to "Стандартная", 2 to "Интенсивная", 3 to "Нарастающая")
-                                .forEach { (patternId, label) ->
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        androidx.compose.material3.RadioButton(
-                                            selected = template.vibrationPatternId == patternId,
-                                            onClick = {
-                                                viewModel.updateTemplate(template.copy(vibrationPatternId = patternId))
-                                            }
-                                        )
-                                        Text(label)
-                                    }
+                            listOf(
+                                0 to "Выключена",
+                                1 to "Стандартная",
+                                2 to "Интенсивная",
+                                3 to "Нарастающая"
+                            ).forEach { (patternId, label) ->
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(
+                                        selected = template.vibrationPatternId == patternId,
+                                        onClick = {
+                                            viewModel.updateTemplate(template.copy(vibrationPatternId = patternId))
+                                        }
+                                    )
+                                    Text(label)
                                 }
-                            Button(
-                                onClick = {
-                                    viewModel.updateTemplate(template.copy(name = name, description = description))
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("Сохранить изменения")
                             }
                         }
                     }
@@ -261,7 +353,9 @@ fun EditorScreen(
                 item {
                     Text(
                         "Интервалов пока нет. Добавьте фазы тренировки кнопкой +.",
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 24.dp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -298,7 +392,7 @@ fun EditorScreen(
                     )
                 }
             }
-            item { Spacer(modifier = Modifier.height(72.dp)) }
+            item { Spacer(modifier = Modifier.height(16.dp)) }
         }
     }
 
@@ -314,6 +408,66 @@ fun EditorScreen(
 }
 
 @Composable
+private fun SaveTemplateButton(
+    state: SaveButtonState,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    val containerColor = when (state) {
+        SaveButtonState.Success -> Color(0xFF2E7D32)
+        else -> MaterialTheme.colorScheme.secondaryContainer
+    }
+    val contentColor = when (state) {
+        SaveButtonState.Success -> Color.White
+        else -> MaterialTheme.colorScheme.onSecondaryContainer
+    }
+    ExtendedFloatingActionButton(
+        onClick = { if (enabled) onClick() },
+        containerColor = containerColor,
+        contentColor = contentColor,
+        icon = {
+            AnimatedContent(
+                targetState = state,
+                transitionSpec = {
+                    (fadeIn(tween(180)) + scaleIn(tween(220), initialScale = 0.6f))
+                        .togetherWith(fadeOut(tween(140)) + scaleOut(tween(180), targetScale = 0.6f))
+                },
+                label = "save_icon"
+            ) { s ->
+                when (s) {
+                    SaveButtonState.Idle -> Icon(Icons.Default.Save, contentDescription = null)
+                    SaveButtonState.Saving -> CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = contentColor
+                    )
+                    SaveButtonState.Success -> Icon(Icons.Default.Check, contentDescription = null)
+                }
+            }
+        },
+        text = {
+            AnimatedContent(
+                targetState = state,
+                transitionSpec = {
+                    (fadeIn(tween(180)) + scaleIn(tween(220), initialScale = 0.85f))
+                        .togetherWith(fadeOut(tween(140)) + scaleOut(tween(180), targetScale = 0.85f))
+                },
+                label = "save_text"
+            ) { s ->
+                Text(
+                    text = when (s) {
+                        SaveButtonState.Idle -> "Сохранить"
+                        SaveButtonState.Saving -> "Сохранение…"
+                        SaveButtonState.Success -> "Сохранено!"
+                    },
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+    )
+}
+
+@Composable
 fun IntervalItem(
     interval: IntervalEntity,
     onDelete: () -> Unit,
@@ -321,10 +475,14 @@ fun IntervalItem(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val accent = parseColor(interval.colorHex)
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             try {
-                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
                 onUpdate(interval.copy(backgroundType = "CUSTOM_IMAGE", backgroundValue = uri.toString()))
             } catch (error: SecurityException) {
                 Toast.makeText(context, "Не удалось сохранить доступ к изображению", Toast.LENGTH_LONG).show()
@@ -334,7 +492,10 @@ fun IntervalItem(
     val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             try {
-                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
                 onUpdate(interval.copy(backgroundType = "VIDEO", backgroundValue = uri.toString()))
             } catch (error: SecurityException) {
                 Toast.makeText(context, "Не удалось сохранить доступ к видео", Toast.LENGTH_LONG).show()
@@ -344,31 +505,72 @@ fun IntervalItem(
     val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             try {
-                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
                 onUpdate(interval.copy(audioUri = uri.toString()))
             } catch (error: SecurityException) {
                 Toast.makeText(context, "Не удалось сохранить доступ к аудиофайлу", Toast.LENGTH_LONG).show()
             }
         }
     }
-    Card(
-        modifier = modifier.fillMaxWidth().animateContentSize(),
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+
+    // Box + Modifier.shadow вместо Card — чтобы не было «серых углов» на светлой теме
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .animateContentSize()
+            .shadow(
+                elevation = 8.dp,
+                shape = RoundedCornerShape(22.dp),
+                ambientColor = accent.copy(alpha = 0.35f),
+                spotColor = accent.copy(alpha = 0.45f)
+            )
+            .clip(RoundedCornerShape(22.dp))
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        accent.copy(alpha = 0.30f),
+                        accent.copy(alpha = 0.10f),
+                        MaterialTheme.colorScheme.surface
+                    ),
+                    start = Offset.Zero,
+                    end = Offset(700f, 500f)
+                )
+            )
     ) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .width(6.dp)
+                .height(72.dp)
+                .background(accent, RoundedCornerShape(topEnd = 6.dp, bottomEnd = 6.dp))
+        )
         Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 16.dp, top = 16.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .size(24.dp)
-                        .background(parseColor(interval.colorHex), CircleShape)
+                        .size(34.dp)
+                        .background(
+                            Brush.radialGradient(
+                                colors = listOf(accent, accent.copy(alpha = 0.55f))
+                            ),
+                            CircleShape
+                        )
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(interval.name, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        interval.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
                     Text(
                         "${interval.durationSeconds} сек",
                         style = MaterialTheme.typography.bodyMedium,
@@ -387,7 +589,11 @@ fun IntervalItem(
                 onClick = { imagePicker.launch(arrayOf("image/*")) },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(if (interval.backgroundType == "CUSTOM_IMAGE") "Заменить изображение" else "Выбрать изображение")
+                Text(
+                    if (interval.backgroundType == "CUSTOM_IMAGE")
+                        "Заменить изображение"
+                    else "Выбрать изображение"
+                )
             }
             if (interval.backgroundType == "CUSTOM_IMAGE") {
                 androidx.compose.material3.TextButton(
@@ -399,7 +605,11 @@ fun IntervalItem(
                 onClick = { videoPicker.launch(arrayOf("video/*")) },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(if (interval.backgroundType == "VIDEO") "Заменить видеофон" else "Выбрать видеофон")
+                Text(
+                    if (interval.backgroundType == "VIDEO")
+                        "Заменить видеофон"
+                    else "Выбрать видеофон"
+                )
             }
             if (interval.backgroundType == "VIDEO") {
                 androidx.compose.material3.TextButton(
@@ -411,13 +621,13 @@ fun IntervalItem(
                 onClick = { audioPicker.launch(arrayOf("audio/*")) },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(if (interval.audioUri == null) "Добавить мелодию" else "Заменить мелодию")
+                Text(
+                    if (interval.audioUri == null) "Добавить мелодию" else "Заменить мелодию"
+                )
             }
             if (interval.audioUri != null) {
                 androidx.compose.material3.TextButton(
-                    onClick = {
-                        onUpdate(interval.copy(audioUri = null))
-                    },
+                    onClick = { onUpdate(interval.copy(audioUri = null)) },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Удалить мелодию") }
             }

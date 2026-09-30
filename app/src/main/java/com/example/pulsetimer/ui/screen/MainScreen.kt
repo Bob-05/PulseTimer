@@ -1,5 +1,7 @@
 package com.pulsetimer.ui.screen
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -38,11 +40,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -50,6 +56,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pulsetimer.data.entity.TemplateEntity
 import com.pulsetimer.viewmodel.TimerViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -63,10 +70,11 @@ fun MainScreen(
     val templates by viewModel.templates.collectAsState()
     val pagerState = rememberPagerState(pageCount = { templates.size })
     val scope = rememberCoroutineScope()
+    var deletingId by remember { mutableStateOf<Long?>(null) }
 
     LaunchedEffect(templates.size) {
         if (templates.isNotEmpty() && pagerState.currentPage >= templates.size) {
-            scope.launch { pagerState.animateScrollToPage(0) }
+            pagerState.animateScrollToPage(templates.size - 1)
         }
     }
 
@@ -88,19 +96,20 @@ fun MainScreen(
                 .padding(padding),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-                androidx.compose.material3.OutlinedButton(
-                    onClick = { viewModel.addTemplate("Новая тренировка", "Добавьте описание") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp, vertical = 12.dp)
-                        .height(52.dp),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Добавить тренировку")
-                }
-                if (templates.isEmpty()) {
+            androidx.compose.material3.OutlinedButton(
+                onClick = { viewModel.addTemplate("Новая тренировка", "Добавьте описание") },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 12.dp)
+                    .height(52.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Добавить тренировку")
+            }
+
+            if (templates.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -122,10 +131,34 @@ fun MainScreen(
                     contentPadding = PaddingValues(horizontal = 32.dp),
                     pageSpacing = 16.dp
                 ) { page ->
-                    val template = templates[page]
+                    val template = templates.getOrNull(page) ?: return@HorizontalPager
+                    val isDeleting = deletingId == template.id
+                    val scale by animateFloatAsState(
+                        targetValue = if (isDeleting) 0.7f else 1f,
+                        animationSpec = tween(durationMillis = 300),
+                        label = "template_scale_${template.id}"
+                    )
+                    val alpha by animateFloatAsState(
+                        targetValue = if (isDeleting) 0f else 1f,
+                        animationSpec = tween(durationMillis = 300),
+                        label = "template_alpha_${template.id}"
+                    )
                     TemplateCard(
                         template = template,
-                        onDelete = { viewModel.deleteTemplate(template) },
+                        modifier = Modifier.graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                            this.alpha = alpha
+                        },
+                        onDelete = {
+                            if (deletingId != null) return@TemplateCard
+                            deletingId = template.id
+                            scope.launch {
+                                delay(300)
+                                viewModel.deleteTemplate(template)
+                                deletingId = null
+                            }
+                        },
                         onEdit = { onEditClick(template.id) }
                     )
                 }
@@ -183,10 +216,11 @@ fun MainScreen(
 fun TemplateCard(
     template: TemplateEntity,
     onDelete: () -> Unit,
-    onEdit: () -> Unit
+    onEdit: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(vertical = 32.dp),
         shape = RoundedCornerShape(24.dp),

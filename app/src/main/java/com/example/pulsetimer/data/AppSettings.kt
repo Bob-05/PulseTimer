@@ -2,6 +2,7 @@ package com.pulsetimer.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.core.content.edit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,6 +16,7 @@ data class AppSettings(
     val vibrationProfile: String = "SPORT",
     val theme: String = "OLED",
     val animatedBackgrounds: Boolean = true,
+    val intervalAnimation: String = "SLIDE",
     val musicUri: String? = null
 )
 
@@ -34,17 +36,17 @@ object AppSettingsStore {
                 )
                 val prefs = preferences!!
                 val hadCustomPalette = prefs.contains("customPrimary") ||
-                    prefs.contains("customBackground") ||
-                    prefs.contains("customSurface")
+                        prefs.contains("customBackground") ||
+                        prefs.contains("customSurface")
                 if (prefs.getString("theme", "OLED") == "CUSTOM" || hadCustomPalette) {
-                    val editor = prefs.edit()
-                        .remove("customPrimary")
-                        .remove("customBackground")
-                        .remove("customSurface")
-                    if (prefs.getString("theme", "OLED") == "CUSTOM") {
-                        editor.putString("theme", "OLED")
+                    prefs.edit {
+                        remove("customPrimary")
+                        remove("customBackground")
+                        remove("customSurface")
+                        if (prefs.getString("theme", "OLED") == "CUSTOM") {
+                            putString("theme", "OLED")
+                        }
                     }
-                    check(editor.commit()) { "Unable to remove legacy custom palette settings" }
                 }
                 mutableSettings.value = readSettings(prefs)
             }
@@ -58,17 +60,18 @@ object AppSettingsStore {
                 "AppSettingsStore must be initialized before updating settings"
             }
             val updated = transform(mutableSettings.value)
-            check(prefs.edit()
-                .putBoolean("soundEnabled", updated.soundEnabled)
-                .putBoolean("voiceEnabled", updated.voiceEnabled)
-                .putFloat("soundVolume", updated.soundVolume.coerceIn(0f, 1f))
-                .putString("toneType", updated.toneType)
-                .putBoolean("vibrationEnabled", updated.vibrationEnabled)
-                .putString("vibrationProfile", updated.vibrationProfile)
-                .putString("theme", updated.theme)
-                .putBoolean("animatedBackgrounds", updated.animatedBackgrounds)
-                .putString("musicUri", updated.musicUri)
-                .commit()) { "Unable to save PulseTimer settings" }
+            prefs.edit {
+                putBoolean("soundEnabled", updated.soundEnabled)
+                putBoolean("voiceEnabled", updated.voiceEnabled)
+                putFloat("soundVolume", updated.soundVolume.coerceIn(0f, 1f))
+                putString("toneType", updated.toneType)
+                putBoolean("vibrationEnabled", updated.vibrationEnabled)
+                putString("vibrationProfile", updated.vibrationProfile)
+                putString("theme", updated.theme)
+                putBoolean("animatedBackgrounds", updated.animatedBackgrounds)
+                putString("intervalAnimation", updated.intervalAnimation)
+                putString("musicUri", updated.musicUri)
+            }
             mutableSettings.value = updated.copy(soundVolume = updated.soundVolume.coerceIn(0f, 1f))
         }
     }
@@ -82,6 +85,7 @@ object AppSettingsStore {
         vibrationProfile = prefs.getString("vibrationProfile", "SPORT") ?: "SPORT",
         theme = prefs.getString("theme", "OLED") ?: "OLED",
         animatedBackgrounds = prefs.getBoolean("animatedBackgrounds", true),
+        intervalAnimation = prefs.getString("intervalAnimation", "SLIDE") ?: "SLIDE",
         musicUri = prefs.getString("musicUri", null)
     )
 }

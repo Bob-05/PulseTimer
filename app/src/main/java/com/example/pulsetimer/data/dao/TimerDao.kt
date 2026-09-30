@@ -38,9 +38,6 @@ interface TimerDao {
     @Delete
     suspend fun deleteInterval(interval: IntervalEntity)
 
-    @Query("DELETE FROM intervals WHERE templateId = :templateId")
-    suspend fun deleteIntervalsByTemplateId(templateId: Long)
-
     @Query("SELECT * FROM intervals WHERE templateId = :templateId ORDER BY orderIndex ASC")
     fun getIntervalsByTemplateId(templateId: Long): Flow<List<IntervalEntity>>
 
@@ -53,14 +50,8 @@ interface TimerDao {
     @Query("SELECT * FROM session_logs ORDER BY startedAt DESC")
     fun getAllSessionLogs(): Flow<List<SessionLogEntity>>
 
-    @Query("SELECT * FROM session_logs WHERE templateId = :templateId ORDER BY startedAt DESC")
-    fun getSessionLogsByTemplateId(templateId: Long): Flow<List<SessionLogEntity>>
-
     @Query("DELETE FROM session_logs WHERE id = :logId")
     suspend fun deleteSessionLogById(logId: Long)
-
-    @Query("DELETE FROM session_logs WHERE templateId = :templateId")
-    suspend fun deleteSessionLogsByTemplateId(templateId: Long)
 
     @Query("DELETE FROM session_logs")
     suspend fun clearAllSessionLogs()

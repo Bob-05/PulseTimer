@@ -1,5 +1,6 @@
 package com.pulsetimer
 
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -7,19 +8,21 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.pulsetimer.data.AppSettingsStore
+import com.pulsetimer.service.TimerService
 import com.pulsetimer.ui.navigation.Screen
 import com.pulsetimer.ui.screen.EditorScreen
 import com.pulsetimer.ui.screen.ExecutionScreen
 import com.pulsetimer.ui.screen.MainScreen
 import com.pulsetimer.ui.screen.SettingsScreen
 import com.pulsetimer.ui.theme.PulseTimerTheme
-import com.pulsetimer.data.AppSettingsStore
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -35,6 +38,22 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val navController = rememberNavController()
 
+                    // Авто-возврат к активной тренировке при запуске приложения
+                    LaunchedEffect(Unit) {
+                        val s = TimerService.state.value
+                        if (s.isRunning && !s.isFinished && s.templateId > 0L) {
+                            val current = navController.currentBackStackEntry?.destination?.route
+                            val execRoute = "${Screen.Execution.route}/{templateId}/{templateName}"
+                            if (current != execRoute) {
+                                navController.navigate(
+                                    "${Screen.Execution.route}/${s.templateId}/${Uri.encode(s.templateName)}"
+                                ) {
+                                    launchSingleTop = true
+                                }
+                            }
+                        }
+                    }
+
                     NavHost(
                         navController = navController,
                         startDestination = Screen.Main.route
@@ -43,7 +62,7 @@ class MainActivity : ComponentActivity() {
                             MainScreen(
                                 onStartClick = { templateId, templateName ->
                                     navController.navigate(
-                                        "${Screen.Execution.route}/$templateId/$templateName"
+                                        "${Screen.Execution.route}/$templateId/${Uri.encode(templateName)}"
                                     )
                                 },
                                 onEditClick = { templateId ->
@@ -58,10 +77,10 @@ class MainActivity : ComponentActivity() {
                         composable(
                             route = "${Screen.Execution.route}/{templateId}/{templateName}"
                         ) { backStackEntry ->
-                            val templateId = backStackEntry.arguments?.getString("templateId")?.toLongOrNull() ?: 0L
-                            val templateName = backStackEntry.arguments?.getString("templateName") ?: ""
+                            val templateName = Uri.decode(
+                                backStackEntry.arguments?.getString("templateName") ?: ""
+                            )
                             ExecutionScreen(
-                                templateId = templateId,
                                 templateName = templateName,
                                 onFinish = {
                                     navController.navigate(Screen.Main.route) {

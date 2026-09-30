@@ -12,7 +12,6 @@ import com.pulsetimer.service.TimerService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
@@ -30,114 +29,68 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
     val sessionLogs: StateFlow<List<SessionLogEntity>> = dao.getAllSessionLogs()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    private val _selectedTemplateId = MutableStateFlow<Long?>(null)
-    val selectedTemplateId: StateFlow<Long?> = _selectedTemplateId.asStateFlow()
+    private val selectedTemplateId = MutableStateFlow<Long?>(null)
 
-    val selectedTemplate: StateFlow<TemplateEntity?> = _selectedTemplateId
-        .combine(templates) { id, list ->
-            list.find { it.id == id }
-        }
+    val selectedTemplate: StateFlow<TemplateEntity?> = selectedTemplateId
+        .combine(templates) { id, list -> list.find { it.id == id } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
-    val selectedTemplateIntervals: StateFlow<List<IntervalEntity>> = _selectedTemplateId
+    val selectedTemplateIntervals: StateFlow<List<IntervalEntity>> = selectedTemplateId
         .flatMapLatest { id ->
-            if (id != null) {
-                dao.getIntervalsByTemplateId(id)
-            } else {
-                flowOf(emptyList())
-            }
+            if (id != null) dao.getIntervalsByTemplateId(id) else flowOf(emptyList())
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val timerState: StateFlow<TimerService.ServiceTimerState> = TimerService.state
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), TimerService.ServiceTimerState())
 
-    fun selectTemplate(id: Long) {
-        _selectedTemplateId.value = id
-    }
+    fun selectTemplate(id: Long) { selectedTemplateId.value = id }
 
-    fun clearSelectedTemplate() {
-        _selectedTemplateId.value = null
-    }
+    fun clearSelectedTemplate() { selectedTemplateId.value = null }
 
     fun addTemplate(name: String, description: String) {
         viewModelScope.launch {
-            dao.insertTemplate(
-                TemplateEntity(name = name, description = description)
-            )
+            dao.insertTemplate(TemplateEntity(name = name, description = description))
         }
     }
 
     fun deleteTemplate(template: TemplateEntity) {
-        viewModelScope.launch {
-            dao.deleteTemplate(template)
-        }
+        viewModelScope.launch { dao.deleteTemplate(template) }
     }
 
     fun updateTemplate(template: TemplateEntity) {
-        viewModelScope.launch {
-            dao.updateTemplate(template)
-        }
+        viewModelScope.launch { dao.updateTemplate(template) }
     }
 
     fun addInterval(templateId: Long, name: String, durationSeconds: Int, colorHex: String) {
         viewModelScope.launch {
             val currentIntervals = dao.getIntervalsByTemplateId(templateId).first()
-            val orderIndex = currentIntervals.size
             dao.insertInterval(
                 IntervalEntity(
                     templateId = templateId,
                     name = name,
                     durationSeconds = durationSeconds,
                     colorHex = colorHex,
-                    orderIndex = orderIndex
+                    orderIndex = currentIntervals.size
                 )
             )
         }
     }
 
     fun deleteInterval(interval: IntervalEntity) {
-        viewModelScope.launch {
-            dao.deleteInterval(interval)
-        }
+        viewModelScope.launch { dao.deleteInterval(interval) }
     }
 
     fun updateInterval(interval: IntervalEntity) {
-        viewModelScope.launch {
-            dao.insertInterval(interval)
-        }
-    }
-
-    fun logSession(templateId: Long, templateName: String, startedAt: Long, completedAt: Long, duration: Int) {
-        viewModelScope.launch {
-            dao.insertSessionLog(
-                SessionLogEntity(
-                    templateId = templateId,
-                    templateName = templateName,
-                    startedAt = startedAt,
-                    completedAt = completedAt,
-                    totalDurationSeconds = duration
-                )
-            )
-        }
+        viewModelScope.launch { dao.insertInterval(interval) }
     }
 
     fun deleteSessionLog(log: SessionLogEntity) {
-        viewModelScope.launch {
-            dao.deleteSessionLogById(log.id)
-        }
-    }
-
-    fun deleteSessionLogsForTemplate(templateId: Long) {
-        viewModelScope.launch {
-            dao.deleteSessionLogsByTemplateId(templateId)
-        }
+        viewModelScope.launch { dao.deleteSessionLogById(log.id) }
     }
 
     fun clearSessionHistory() {
-        viewModelScope.launch {
-            dao.clearAllSessionLogs()
-        }
+        viewModelScope.launch { dao.clearAllSessionLogs() }
     }
 
     fun startTimer(templateId: Long, templateName: String) {
@@ -153,36 +106,28 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
     fun pauseTimer() {
         val context = getApplication<Application>()
         context.startForegroundService(
-            Intent(context, TimerService::class.java).apply {
-                action = TimerService.ACTION_PAUSE
-            }
+            Intent(context, TimerService::class.java).apply { action = TimerService.ACTION_PAUSE }
         )
     }
 
     fun resumeTimer() {
         val context = getApplication<Application>()
         context.startForegroundService(
-            Intent(context, TimerService::class.java).apply {
-                action = TimerService.ACTION_RESUME
-            }
+            Intent(context, TimerService::class.java).apply { action = TimerService.ACTION_RESUME }
         )
     }
 
     fun skipInterval() {
         val context = getApplication<Application>()
         context.startForegroundService(
-            Intent(context, TimerService::class.java).apply {
-                action = TimerService.ACTION_SKIP
-            }
+            Intent(context, TimerService::class.java).apply { action = TimerService.ACTION_SKIP }
         )
     }
 
     fun stopTimer() {
         val context = getApplication<Application>()
         context.startForegroundService(
-            Intent(context, TimerService::class.java).apply {
-                action = TimerService.ACTION_STOP
-            }
+            Intent(context, TimerService::class.java).apply { action = TimerService.ACTION_STOP }
         )
     }
 }

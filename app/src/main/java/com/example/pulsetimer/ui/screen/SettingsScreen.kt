@@ -1,6 +1,7 @@
 package com.pulsetimer.ui.screen
 
 import android.content.Intent
+import android.text.format.DateFormat
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -17,10 +18,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Button
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -35,6 +36,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -42,14 +44,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.pulsetimer.data.AppSettings
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.data.entity.SessionLogEntity
 import com.pulsetimer.viewmodel.TimerViewModel
-import androidx.lifecycle.viewmodel.compose.viewModel
-import java.text.SimpleDateFormat
 import java.util.Date
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,6 +59,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val logs by viewModel.sessionLogs.collectAsState()
     var showClearHistoryConfirmation by remember { mutableStateOf(false) }
     var pendingDeleteLog by remember { mutableStateOf<SessionLogEntity?>(null) }
+
     val audioPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -74,6 +74,11 @@ fun SettingsScreen(onBack: () -> Unit) {
                 Toast.makeText(context, "Не удалось сохранить доступ к аудиофайлу", Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    // Локальный стейт слайдера — плавное перетаскивание, сохранение по окончании
+    var localVolume by remember(settings.soundVolume) {
+        mutableFloatStateOf(settings.soundVolume)
     }
 
     Scaffold(
@@ -100,23 +105,28 @@ fun SettingsScreen(onBack: () -> Unit) {
                 SettingSwitch(
                     title = "Звуковые сигналы",
                     checked = settings.soundEnabled,
-                    onCheckedChange = { updateSettings { copy(soundEnabled = it) } }
+                    onCheckedChange = { value ->
+                        AppSettingsStore.update { it.copy(soundEnabled = value) }
+                    }
                 )
             }
             item {
                 SettingSwitch(
                     title = "Голосовой помощник",
                     checked = settings.voiceEnabled,
-                    onCheckedChange = { updateSettings { copy(voiceEnabled = it) } }
+                    onCheckedChange = { value ->
+                        AppSettingsStore.update { it.copy(voiceEnabled = value) }
+                    }
                 )
             }
             item {
                 Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                    Text("Громкость сигналов: ${(settings.soundVolume * 100).toInt()}%")
+                    Text("Громкость сигналов: ${(localVolume * 100).toInt()}%")
                     Slider(
-                        value = settings.soundVolume,
-                        onValueChange = { volume ->
-                            AppSettingsStore.update { it.copy(soundVolume = volume) }
+                        value = localVolume,
+                        onValueChange = { localVolume = it },
+                        onValueChangeFinished = {
+                            AppSettingsStore.update { it.copy(soundVolume = localVolume) }
                         },
                         valueRange = 0f..1f
                     )
@@ -125,15 +135,23 @@ fun SettingsScreen(onBack: () -> Unit) {
             item {
                 ChoiceCard(
                     title = "Звук сигнала",
-                    choices = listOf("CLASSIC" to "Зуммер", "WHISTLE" to "Свисток", "GONG" to "Гонг"),
+                    choices = listOf(
+                        "CLASSIC" to "Зуммер",
+                        "WHISTLE" to "Свисток",
+                        "GONG" to "Гонг"
+                    ),
                     selected = settings.toneType,
-                    onSelected = { updateSettings { copy(toneType = it) } }
+                    onSelected = { value ->
+                        AppSettingsStore.update { it.copy(toneType = value) }
+                    }
                 )
             }
             item {
                 Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                     Text(
-                        text = if (settings.musicUri == null) "Фоновая музыка не выбрана" else "Фоновая музыка выбрана",
+                        text = if (settings.musicUri == null)
+                            "Фоновая музыка не выбрана"
+                        else "Фоновая музыка выбрана",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -141,11 +159,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                             Text("Выбрать аудио")
                         }
                         if (settings.musicUri != null) {
-                            Button(
-                                onClick = {
-                                    AppSettingsStore.update { it.copy(musicUri = null) }
-                                }
-                            ) {
+                            Button(onClick = {
+                                AppSettingsStore.update { it.copy(musicUri = null) }
+                            }) {
                                 Icon(Icons.Default.Delete, contentDescription = null)
                                 Text("Удалить мелодию")
                             }
@@ -159,15 +175,23 @@ fun SettingsScreen(onBack: () -> Unit) {
                 SettingSwitch(
                     title = "Вибрация",
                     checked = settings.vibrationEnabled,
-                    onCheckedChange = { updateSettings { copy(vibrationEnabled = it) } }
+                    onCheckedChange = { value ->
+                        AppSettingsStore.update { it.copy(vibrationEnabled = value) }
+                    }
                 )
             }
             item {
                 ChoiceCard(
                     title = "Профиль вибрации",
-                    choices = listOf("SOFT" to "Мягкий", "SPORT" to "Спортивный", "EXTREME" to "Экстремальный"),
+                    choices = listOf(
+                        "SOFT" to "Мягкий",
+                        "SPORT" to "Спортивный",
+                        "EXTREME" to "Экстремальный"
+                    ),
                     selected = settings.vibrationProfile,
-                    onSelected = { updateSettings { copy(vibrationProfile = it) } }
+                    onSelected = { value ->
+                        AppSettingsStore.update { it.copy(vibrationProfile = value) }
+                    }
                 )
             }
 
@@ -181,7 +205,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                         "GRAY" to "Серая"
                     ),
                     selected = settings.theme,
-                    onSelected = { updateSettings { copy(theme = it) } }
+                    onSelected = { value ->
+                        AppSettingsStore.update { it.copy(theme = value) }
+                    }
                 )
             }
             item {
@@ -189,7 +215,25 @@ fun SettingsScreen(onBack: () -> Unit) {
                     title = "Анимированные фоны",
                     subtitle = "Отключите для экономии батареи",
                     checked = settings.animatedBackgrounds,
-                    onCheckedChange = { updateSettings { copy(animatedBackgrounds = it) } }
+                    onCheckedChange = { value ->
+                        AppSettingsStore.update { it.copy(animatedBackgrounds = value) }
+                    }
+                )
+            }
+            item {
+                ChoiceCard(
+                    title = "Анимация смены интервалов",
+                    choices = listOf(
+                        "SLIDE" to "Слайд",
+                        "FADE" to "Затухание",
+                        "ZOOM" to "Масштаб",
+                        "GLIDE" to "Скольжение",
+                        "BOUNCE" to "Отскок"
+                    ),
+                    selected = settings.intervalAnimation,
+                    onSelected = { value ->
+                        AppSettingsStore.update { it.copy(intervalAnimation = value) }
+                    }
                 )
             }
 
@@ -230,12 +274,10 @@ fun SettingsScreen(onBack: () -> Unit) {
             title = { Text("Удалить запись?") },
             text = { Text("Запись тренировки «${log.templateName}» будет удалена без возможности восстановления.") },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        viewModel.deleteSessionLog(log)
-                        pendingDeleteLog = null
-                    }
-                ) { Text("Удалить") }
+                TextButton(onClick = {
+                    viewModel.deleteSessionLog(log)
+                    pendingDeleteLog = null
+                }) { Text("Удалить") }
             },
             dismissButton = {
                 TextButton(onClick = { pendingDeleteLog = null }) { Text("Отмена") }
@@ -248,12 +290,10 @@ fun SettingsScreen(onBack: () -> Unit) {
             title = { Text("Очистить историю?") },
             text = { Text("Все ${logs.size} записей тренировок будут удалены без возможности восстановления.") },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        viewModel.clearSessionHistory()
-                        showClearHistoryConfirmation = false
-                    }
-                ) { Text("Очистить") }
+                TextButton(onClick = {
+                    viewModel.clearSessionHistory()
+                    showClearHistoryConfirmation = false
+                }) { Text("Очистить") }
             },
             dismissButton = {
                 TextButton(onClick = { showClearHistoryConfirmation = false }) { Text("Отмена") }
@@ -319,7 +359,11 @@ private fun SessionLogCard(log: SessionLogEntity, onDelete: () -> Unit) {
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(log.templateName, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Text(
+                    log.templateName,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f)
+                )
                 IconButton(onClick = onDelete) {
                     Icon(
                         Icons.Default.Delete,
@@ -346,11 +390,6 @@ private fun SessionLogCard(log: SessionLogEntity, onDelete: () -> Unit) {
     }
 }
 
-private fun updateSettings(transform: AppSettings.() -> AppSettings) {
-    AppSettingsStore.update { it.transform() }
-}
-
 fun formatTimestamp(timestamp: Long): String {
-    val sdf = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault())
-    return sdf.format(Date(timestamp))
+    return DateFormat.format("dd.MM.yyyy HH:mm", Date(timestamp)).toString()
 }

@@ -1,21 +1,20 @@
 package com.pulsetimer.service
 
+import android.animation.ValueAnimator
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.animation.ValueAnimator
 import android.content.Context
 import android.content.Intent
 import android.database.sqlite.SQLiteException
 import android.media.AudioAttributes
-import android.media.AudioFormat
 import android.media.AudioFocusRequest
+import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
 import android.media.MediaPlayer
-import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -27,6 +26,7 @@ import android.os.VibratorManager
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.net.toUri
 import com.pulsetimer.MainActivity
 import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.data.database.AppDatabase
@@ -66,13 +66,17 @@ class TimerService : Service() {
     private var templateVibrationPatternId: Int = 1
     private var activeTemplateId: Long? = null
     private var sessionStartedAt: Long = 0L
+
     private var mediaPlayer: MediaPlayer? = null
     private var playingAudioUri: String? = null
+    private var volumeAnimator: ValueAnimator? = null
     private var toneTrack: AudioTrack? = null
+
     private var textToSpeech: TextToSpeech? = null
     private var textToSpeechReady = false
     private var pendingSpeech: String? = null
     private var audioFocusRequest: AudioFocusRequest? = null
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private val audioManager by lazy { getSystemService(AUDIO_SERVICE) as AudioManager }
     private val vibrator: Vibrator by lazy {
@@ -80,13 +84,14 @@ class TimerService : Service() {
             (getSystemService(VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
         } else {
             @Suppress("DEPRECATION")
-            getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            getSystemService(VIBRATOR_SERVICE) as Vibrator
         }
     }
 
     private val dao by lazy { AppDatabase.getDatabase(this).timerDao() }
 
     companion object {
+        private const val TAG = "TimerService"
         const val CHANNEL_ID = "pulse_timer_channel"
         const val NOTIFICATION_ID = 1
 
@@ -115,6 +120,7 @@ class TimerService : Service() {
         val currentIntervalColor: String = "#007AFF",
         val timeRemainingSeconds: Int = 0,
         val totalIntervals: Int = 0,
+        val templateId: Long = 0L,
         val templateName: String = "",
         val backgroundType: String = "COLOR",
         val backgroundValue: String = "",
@@ -148,7 +154,7 @@ class TimerService : Service() {
                     pendingSpeech = null
                 }
             } else {
-                Log.e("TimerService", "TextToSpeech initialization failed: $status")
+                Log.e(TAG, "TextToSpeech initialization failed: $status")
             }
         }
     }
@@ -158,23 +164,32 @@ class TimerService : Service() {
             ACTION_START -> {
                 val templateId = intent.getLongExtra(EXTRA_TEMPLATE_ID, -1L)
                 templateName = intent.getStringExtra(EXTRA_TEMPLATE_NAME) ?: "Тренировка"
-                if (templateId != -1L) {
-                    startTimer(templateId)
-                }
+                if (templateId != -1L) startTimer(templateId)
             }
             ACTION_PAUSE -> pauseTimer()
             ACTION_RESUME -> resumeTimer()
             ACTION_SKIP -> skipInterval()
             ACTION_STOP -> stopTimer()
         }
-        return START_STICKY
+        return START_NOT_STICKY
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        Log.i(TAG, "Task removed — timer keeps running")
     }
 
     private fun startTimer(templateId: Long) {
+        if (activeTemplateId != null) finalizeAbandonedSession()
+        timerJob?.cancel()
+        cancelVolumeAnimator()
+        releasePlayerSafely()
+        if (wakeLock?.isHeld == true) wakeLock?.release()
+
         serviceScope.launch(Dispatchers.IO) {
             val template = dao.getTemplateById(templateId).first()
             if (template == null) {
-                Log.e("TimerService", "Template $templateId was not found")
+                Log.e(TAG, "Template $templateId was not found")
                 stopSelf()
                 return@launch
             }
@@ -202,15 +217,38 @@ class TimerService : Service() {
         }
     }
 
+    private fun finalizeAbandonedSession() {
+        val templateId = activeTemplateId ?: return
+        val startedAt = sessionStartedAt
+        val workoutName = templateName
+        val completedAt = System.currentTimeMillis()
+        val duration = ((completedAt - startedAt) / 1_000L)
+            .coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                dao.insertSessionLog(
+                    SessionLogEntity(
+                        templateId = templateId,
+                        templateName = workoutName,
+                        startedAt = startedAt,
+                        completedAt = null,
+                        totalDurationSeconds = duration
+                    )
+                )
+            } catch (e: SQLiteException) {
+                Log.e(TAG, "Unable to persist abandoned session", e)
+            }
+        }
+        activeTemplateId = null
+    }
+
     private fun acquireWakeLockForRemainingSession() {
         val remainingSeconds = timeRemaining.toLong() +
-            intervals.drop(currentIndex + 1).sumOf {
-                it.durationSeconds.coerceAtLeast(0).toLong()
-            }
+                intervals.drop(currentIndex + 1).sumOf { it.durationSeconds.coerceAtLeast(0).toLong() }
         wakeLock?.acquire((remainingSeconds + 60L) * 1_000L)
     }
 
-    private fun runInterval() {
+    private fun runInterval(startPaused: Boolean = false) {
         if (currentIndex >= intervals.size) {
             finishWorkout()
             return
@@ -219,40 +257,35 @@ class TimerService : Service() {
         val interval = intervals[currentIndex]
         timeRemaining = interval.durationSeconds
 
+        isPaused = startPaused
         updateState(
             ServiceTimerState(
-                isRunning = true,
-                isPaused = false,
+                isRunning = !startPaused,
+                isPaused = startPaused,
                 currentIntervalIndex = currentIndex,
                 currentIntervalName = interval.name,
                 currentIntervalColor = interval.colorHex,
                 backgroundType = if (interval.backgroundType == "CUSTOM_IMAGE" || interval.backgroundType == "VIDEO") {
                     interval.backgroundType
-                } else {
-                    templateBackgroundType
-                },
+                } else templateBackgroundType,
                 backgroundValue = if (interval.backgroundType == "CUSTOM_IMAGE" || interval.backgroundType == "VIDEO") {
                     interval.backgroundValue
-                } else {
-                    templateBackgroundValue.ifEmpty { interval.colorHex }
-                },
+                } else templateBackgroundValue.ifEmpty { interval.colorHex },
                 timeRemainingSeconds = timeRemaining,
                 totalIntervals = intervals.size,
+                templateId = activeTemplateId ?: 0L,
                 templateName = templateName,
                 isFinished = false
             )
         )
 
         val intervalWithPattern = interval.copy(
-            vibrationPatternId = if (interval.vibrationPatternId == 1) {
-                templateVibrationPatternId
-            } else {
-                interval.vibrationPatternId
-            }
+            vibrationPatternId = if (interval.vibrationPatternId == 1) templateVibrationPatternId else interval.vibrationPatternId
         )
         performPhaseFeedback(intervalWithPattern)
         speakInterval(interval.name)
         startMusic(interval.audioUri ?: templateAudioUri ?: AppSettingsStore.settings.value.musicUri)
+        if (startPaused) mainHandler.post { mediaPlayer.safePause() }
         updateNotification()
 
         timerJob?.cancel()
@@ -261,11 +294,11 @@ class TimerService : Service() {
                 delay(1000)
                 if (!isPaused) {
                     timeRemaining--
-                    val currentIntervalEntity = intervals.getOrNull(currentIndex)
-                    if (currentIntervalEntity != null) {
+                    val entity = intervals.getOrNull(currentIndex)
+                    if (entity != null) {
                         if (timeRemaining in 1..3) {
                             playTone(isTransition = false)
-                            vibrateForCountdown(currentIntervalEntity.withTemplatePattern())
+                            vibrateForCountdown(entity.withTemplatePattern())
                             speakCountdown(timeRemaining)
                         }
                         updateState(
@@ -279,7 +312,8 @@ class TimerService : Service() {
                     }
                 }
             }
-            if (!isPaused && timeRemaining <= 0) {
+            // Сюда попадаем только если timeRemaining <= 0 или isPaused
+            if (!isPaused) {
                 currentIndex++
                 runInterval()
             }
@@ -288,49 +322,46 @@ class TimerService : Service() {
 
     private fun pauseTimer() {
         isPaused = true
-        mainHandler.post { if (mediaPlayer?.isPlaying == true) mediaPlayer?.pause() }
-        if (wakeLock?.isHeld == true) {
-            wakeLock?.release()
-        }
+        mainHandler.post { mediaPlayer.safePause() }
+        if (wakeLock?.isHeld == true) wakeLock?.release()
         updateState(state.value.copy(isPaused = true, isRunning = false))
         updateNotification()
     }
 
     private fun resumeTimer() {
-        if (isPaused) {
-            isPaused = false
-            acquireWakeLockForRemainingSession()
-            updateState(state.value.copy(isPaused = false, isRunning = true))
-            mainHandler.post { mediaPlayer?.start() }
-            updateNotification()
-            timerJob?.cancel()
-            timerJob = serviceScope.launch {
-                while (timeRemaining > 0 && !isPaused) {
-                    delay(1000)
-                    if (!isPaused) {
-                        timeRemaining--
-                        val currentIntervalEntity = intervals.getOrNull(currentIndex)
-                        if (currentIntervalEntity != null) {
-                            if (timeRemaining in 1..3) {
-                                playTone(isTransition = false)
-                                vibrateForCountdown(currentIntervalEntity.withTemplatePattern())
-                                speakCountdown(timeRemaining)
-                            }
-                            updateState(
-                                state.value.copy(
-                                    timeRemainingSeconds = timeRemaining,
-                                    isRunning = true,
-                                    isPaused = false
-                                )
-                            )
-                            updateNotification()
+        if (!isPaused) return
+        isPaused = false
+        acquireWakeLockForRemainingSession()
+        updateState(state.value.copy(isPaused = false, isRunning = true))
+        mainHandler.post { mediaPlayer.safeStart() }
+        updateNotification()
+        timerJob?.cancel()
+        timerJob = serviceScope.launch {
+            while (timeRemaining > 0 && !isPaused) {
+                delay(1000)
+                if (!isPaused) {
+                    timeRemaining--
+                    val entity = intervals.getOrNull(currentIndex)
+                    if (entity != null) {
+                        if (timeRemaining in 1..3) {
+                            playTone(isTransition = false)
+                            vibrateForCountdown(entity.withTemplatePattern())
+                            speakCountdown(timeRemaining)
                         }
+                        updateState(
+                            state.value.copy(
+                                timeRemainingSeconds = timeRemaining,
+                                isRunning = true,
+                                isPaused = false
+                            )
+                        )
+                        updateNotification()
                     }
                 }
-                if (!isPaused && timeRemaining <= 0) {
-                    currentIndex++
-                    runInterval()
-                }
+            }
+            if (!isPaused) {
+                currentIndex++
+                runInterval()
             }
         }
     }
@@ -343,17 +374,13 @@ class TimerService : Service() {
 
     private fun stopTimer() {
         timerJob?.cancel()
-        if (wakeLock?.isHeld == true) {
-            wakeLock?.release()
-        }
+        if (wakeLock?.isHeld == true) wakeLock?.release()
         persistWorkoutEnd(completed = false)
     }
 
     private fun finishWorkout() {
         timerJob?.cancel()
-        if (wakeLock?.isHeld == true) {
-            wakeLock?.release()
-        }
+        if (wakeLock?.isHeld == true) wakeLock?.release()
         persistWorkoutEnd(completed = true)
     }
 
@@ -375,13 +402,11 @@ class TimerService : Service() {
                             startedAt = startedAt,
                             completedAt = if (completed) completedAt else null,
                             totalDurationSeconds = ((completedAt - startedAt) / 1_000L)
-                                .coerceAtLeast(0L)
-                                .coerceAtMost(Int.MAX_VALUE.toLong())
-                                .toInt()
+                                .coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
                         )
                     )
-                } catch (error: SQLiteException) {
-                    Log.e("TimerService", "Unable to update the workout history entry", error)
+                } catch (e: SQLiteException) {
+                    Log.e(TAG, "Unable to insert workout history", e)
                 }
             }
             withContext(Dispatchers.Main) {
@@ -413,49 +438,35 @@ class TimerService : Service() {
             setSound(null, null)
             enableVibration(false)
         }
-        val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        notificationManager.createNotificationChannel(channel)
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
     }
 
     private fun buildNotification(): Notification {
         val contentIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
-            },
+            this, 0,
+            Intent(this, MainActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_SINGLE_TOP },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
         val pauseIntent = PendingIntent.getForegroundService(
-            this,
-            1,
+            this, 1,
             Intent(this, TimerService::class.java).apply {
                 action = if (isPaused) ACTION_RESUME else ACTION_PAUSE
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
         val skipIntent = PendingIntent.getForegroundService(
-            this,
-            2,
+            this, 2,
             Intent(this, TimerService::class.java).apply { action = ACTION_SKIP },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
         val stopIntent = PendingIntent.getForegroundService(
-            this,
-            3,
+            this, 3,
             Intent(this, TimerService::class.java).apply { action = ACTION_STOP },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         val currentInterval = intervals.getOrNull(currentIndex)
-        val title = if (currentInterval != null) {
-            "$templateName — ${currentInterval.name}"
-        } else {
-            templateName
-        }
+        val title = if (currentInterval != null) "$templateName — ${currentInterval.name}" else templateName
         val text = "Осталось: $timeRemaining сек"
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
@@ -470,53 +481,48 @@ class TimerService : Service() {
                 if (isPaused) "Продолжить" else "Пауза",
                 pauseIntent
             )
-            .addAction(
-                android.R.drawable.ic_media_next,
-                "Пропустить",
-                skipIntent
-            )
-            .addAction(
-                android.R.drawable.ic_delete,
-                "Стоп",
-                stopIntent
-            )
+            .addAction(android.R.drawable.ic_media_next, "Пропустить", skipIntent)
+            .addAction(android.R.drawable.ic_delete, "Стоп", stopIntent)
             .build()
     }
 
     private fun updateNotification() {
-        val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        notificationManager.notify(NOTIFICATION_ID, buildNotification())
+        runCatching {
+            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+                .notify(NOTIFICATION_ID, buildNotification())
+        }
     }
 
     private fun requestAudioFocus() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                        .build()
-                )
-                .setOnAudioFocusChangeListener { change ->
-                    if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
-                        mediaPlayer?.setVolume(0f, 0f)
-                    } else if (change == AudioManager.AUDIOFOCUS_GAIN) {
-                        mediaPlayer?.setVolume(
-                            AppSettingsStore.settings.value.soundVolume,
-                            AppSettingsStore.settings.value.soundVolume
+        val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+            )
+            .setOnAudioFocusChangeListener { change ->
+                when (change) {
+                    AudioManager.AUDIOFOCUS_LOSS,
+                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT ->
+                        mediaPlayer.safeSetVolume(0f)
+                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK ->
+                        mediaPlayer.safeSetVolume(
+                            AppSettingsStore.settings.value.soundVolume * 0.3f
                         )
-                    }
+                    AudioManager.AUDIOFOCUS_GAIN ->
+                        mediaPlayer.safeSetVolume(AppSettingsStore.settings.value.soundVolume)
                 }
-                .build()
-            audioFocusRequest = request
-            audioManager.requestAudioFocus(request)
-        }
+            }
+            .build()
+        audioFocusRequest = request
+        runCatching { audioManager.requestAudioFocus(request) }
     }
 
     private fun startMusic(audioUri: String?) {
         if (audioUri == playingAudioUri) return
         mainHandler.post {
-            releasePlayer()
+            releasePlayerSafely()
             playingAudioUri = audioUri
             if (audioUri == null) return@post
             val player = MediaPlayer()
@@ -530,56 +536,96 @@ class TimerService : Service() {
             player.isLooping = true
             player.setOnPreparedListener {
                 if (mediaPlayer === player) {
-                    val volume = AppSettingsStore.settings.value.soundVolume
-                    player.setVolume(volume, volume)
-                    if (!isPaused) player.start()
+                    val v = AppSettingsStore.settings.value.soundVolume
+                    player.safeSetVolume(v)
+                    if (!isPaused) player.safeStart()
                 }
             }
             player.setOnErrorListener { _, what, extra ->
-                Log.e("TimerService", "Unable to play audio ($what, $extra)")
-                if (mediaPlayer === player) releasePlayer()
+                Log.e(TAG, "MediaPlayer error ($what, $extra)")
+                if (mediaPlayer === player) releasePlayerSafely()
                 true
             }
             try {
-                player.setDataSource(this, Uri.parse(audioUri))
+                player.setDataSource(this, audioUri.toUri())
                 player.prepareAsync()
-            } catch (error: java.io.IOException) {
-                Log.e("TimerService", "Unable to open audio URI: $audioUri", error)
-                releasePlayer()
-            } catch (error: IllegalArgumentException) {
-                Log.e("TimerService", "Invalid audio URI: $audioUri", error)
-                releasePlayer()
+            } catch (e: Exception) {
+                Log.e(TAG, "Unable to open audio URI: $audioUri", e)
+                releasePlayerSafely()
             }
         }
     }
 
+    // === Safe MediaPlayer helpers (защита от краха после release()) ===
+
+    private val MediaPlayer?.safeIsPlaying: Boolean
+        get() = try { this?.isPlaying == true } catch (_: IllegalStateException) { false }
+
+    private fun MediaPlayer?.safeSetVolume(v: Float) {
+        try { this?.setVolume(v, v) } catch (_: IllegalStateException) { }
+    }
+
+    private fun MediaPlayer?.safePause() {
+        try { if (this?.isPlaying == true) this.pause() } catch (_: IllegalStateException) { }
+    }
+
+    private fun MediaPlayer?.safeStart() {
+        try { this?.start() } catch (_: IllegalStateException) { }
+    }
+
+    private fun cancelVolumeAnimator() {
+        volumeAnimator?.cancel()
+        volumeAnimator = null
+    }
+
+    private fun releasePlayerSafely() {
+        cancelVolumeAnimator()
+        val p = mediaPlayer
+        mediaPlayer = null
+        playingAudioUri = null
+        if (p == null) return
+        try { if (p.isPlaying) p.stop() } catch (_: IllegalStateException) { }
+        try { p.reset() } catch (_: IllegalStateException) { }
+        try { p.release() } catch (_: IllegalStateException) { }
+    }
+
+    // === Vibration ===
+
+    private fun buildVibrationEffect(timings: LongArray, amplitudes: IntArray): VibrationEffect {
+        return if (vibrator.hasAmplitudeControl()) {
+            VibrationEffect.createWaveform(timings, amplitudes, -1)
+        } else {
+            VibrationEffect.createWaveform(timings, -1)
+        }
+    }
+
     private fun performPhaseFeedback(interval: IntervalEntity) {
-        val isWork = interval.name.contains("работ", ignoreCase = true) ||
-            interval.name.contains("work", ignoreCase = true) ||
-            interval.colorHex.equals("#FF3B30", ignoreCase = true)
+        val isWork = interval.name.contains("работ", true) ||
+                interval.name.contains("work", true) ||
+                interval.colorHex.equals("#FF3B30", true)
         mainHandler.post {
             playTone(isTransition = true)
             if (AppSettingsStore.settings.value.vibrationEnabled && interval.vibrationPatternId != 0) {
-                val strength = vibrationStrength()
-                val effect = when {
-                    interval.vibrationPatternId == 3 -> VibrationEffect.createWaveform(
-                        longArrayOf(0, 120, 100, 240, 100, 360),
-                        intArrayOf(0, strength / 3, 0, strength * 2 / 3, 0, strength),
-                        -1
+                val s = vibrationStrength()
+                val effect: VibrationEffect? = when (interval.vibrationPatternId) {
+                    3 -> buildVibrationEffect(
+                        longArrayOf(0, 100, 80, 180, 80, 320),
+                        intArrayOf(0, s / 4, 0, s / 2, 0, s)
                     )
-                    interval.vibrationPatternId == 2 && isWork -> VibrationEffect.createWaveform(
-                        longArrayOf(0, 450, 100, 450),
-                        intArrayOf(0, strength, 0, strength),
-                        -1
+                    2 -> buildVibrationEffect(
+                        longArrayOf(0, 400, 80, 400, 80, 400),
+                        intArrayOf(0, s, 0, s, 0, s)
                     )
-                    isWork -> VibrationEffect.createWaveform(
-                        longArrayOf(0, 300, 120, 300),
-                        intArrayOf(0, strength, 0, strength),
-                        -1
+                    1 -> if (isWork) buildVibrationEffect(
+                        longArrayOf(0, 200, 100, 200),
+                        intArrayOf(0, s, 0, s)
+                    ) else buildVibrationEffect(
+                        longArrayOf(0, 500),
+                        intArrayOf(0, s)
                     )
-                    else -> VibrationEffect.createWaveform(longArrayOf(0, 600), intArrayOf(0, strength), -1)
+                    else -> null
                 }
-                vibrator.vibrate(effect)
+                effect?.let { runCatching { vibrator.vibrate(it) } }
             }
         }
     }
@@ -587,9 +633,12 @@ class TimerService : Service() {
     private fun vibrateForCountdown(interval: IntervalEntity) {
         if (!AppSettingsStore.settings.value.vibrationEnabled || interval.vibrationPatternId == 0) return
         mainHandler.post {
-            vibrator.vibrate(
-                VibrationEffect.createOneShot(100, vibrationStrength())
-            )
+            val amp = vibrationStrength()
+            val effect = if (vibrator.hasAmplitudeControl())
+                VibrationEffect.createOneShot(100, amp)
+            else
+                VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE)
+            runCatching { vibrator.vibrate(effect) }
         }
     }
 
@@ -597,76 +646,98 @@ class TimerService : Service() {
         if (vibrationPatternId == 1) copy(vibrationPatternId = templateVibrationPatternId) else this
 
     private fun vibrationStrength(): Int {
-        val profile = AppSettingsStore.settings.value.vibrationProfile
-        return when (profile) {
+        val p = AppSettingsStore.settings.value.vibrationProfile
+        return when (p) {
             "SOFT" -> 80
             "EXTREME" -> 255
             else -> 170
         }
     }
 
+    // === Tone (USAGE_MEDIA — не глушится системным потоком) ===
+
     private fun playTone(isTransition: Boolean) {
         val settings = AppSettingsStore.settings.value
         if (!settings.soundEnabled) return
         mainHandler.post {
-            val duration = if (isTransition) 450 else 120
-            val durationMillis = if (settings.toneType == "GONG" && isTransition) 700 else duration
-            val samples = createToneSamples(settings.toneType, durationMillis, settings.soundVolume)
-            toneTrack?.let { previous ->
-                if (previous.playState == AudioTrack.PLAYSTATE_PLAYING) previous.stop()
-                previous.release()
+            val durationMillis = when {
+                settings.toneType == "GONG" && isTransition -> 700
+                isTransition -> 450
+                else -> 120
             }
-            val track = AudioTrack.Builder()
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setSampleRate(44_100)
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                        .build()
-                )
-                .setBufferSizeInBytes(samples.size * Short.SIZE_BYTES)
-                .setTransferMode(AudioTrack.MODE_STATIC)
-                .build()
-            toneTrack = track
-            track.setVolume(1f)
-            val written = track.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
-            if (written != samples.size) {
-                Log.e("TimerService", "Only wrote $written of ${samples.size} tone samples")
-                track.release()
-                toneTrack = null
+            val samples = createToneSamples(settings.toneType, durationMillis, settings.soundVolume)
+
+            toneTrack?.let { previous ->
+                runCatching {
+                    if (previous.playState == AudioTrack.PLAYSTATE_PLAYING) previous.stop()
+                    previous.release()
+                }
+            }
+
+            val track = try {
+                AudioTrack.Builder()
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .build()
+                    )
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setSampleRate(44_100)
+                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(samples.size * Short.SIZE_BYTES)
+                    .setTransferMode(AudioTrack.MODE_STATIC)
+                    .build()
+            } catch (e: Exception) {
+                Log.e(TAG, "Unable to create AudioTrack", e)
                 return@post
             }
-            track.play()
+            toneTrack = track
+            track.setVolume(1f)
+            val written = try {
+                track.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
+            } catch (e: Exception) {
+                track.release(); toneTrack = null; return@post
+            }
+            if (written != samples.size) {
+                track.release(); toneTrack = null; return@post
+            }
+            runCatching { track.play() }
+
+            // Автоприглушение фоновой музыки на время сигнала
             val player = mediaPlayer
             val currentVolume = settings.soundVolume
-            if (player?.isPlaying == true) {
-                ValueAnimator.ofFloat(1f, 0.5f).apply {
-                    this.duration = 140
-                    addUpdateListener {
-                        val level = (it.animatedValue as Float) * currentVolume
-                        player.setVolume(level, level)
+            if (player.safeIsPlaying) {
+                cancelVolumeAnimator()
+                volumeAnimator = ValueAnimator.ofFloat(1f, 0.5f).apply {
+                    duration = 140
+                    addUpdateListener { anim ->
+                        val level = (anim.animatedValue as Float) * currentVolume
+                        if (mediaPlayer === player) player.safeSetVolume(level)
                     }
                     start()
                 }
             }
+
             mainHandler.postDelayed({
                 if (toneTrack === track) {
-                    if (track.playState == AudioTrack.PLAYSTATE_PLAYING) track.stop()
-                    track.release()
+                    runCatching {
+                        if (track.playState == AudioTrack.PLAYSTATE_PLAYING) track.stop()
+                        track.release()
+                    }
                     toneTrack = null
                 }
-                if (player?.isPlaying == true) {
-                    ValueAnimator.ofFloat(0.5f, 1f).apply {
-                        this.duration = 250
-                        addUpdateListener {
-                            val level = (it.animatedValue as Float) * currentVolume
-                            player.setVolume(level, level)
+                if (mediaPlayer === player && player.safeIsPlaying) {
+                    cancelVolumeAnimator()
+                    volumeAnimator = ValueAnimator.ofFloat(0.5f, 1f).apply {
+                        duration = 250
+                        addUpdateListener { anim ->
+                            val level = (anim.animatedValue as Float) * currentVolume
+                            if (mediaPlayer === player) player.safeSetVolume(level)
                         }
                         start()
                     }
@@ -686,10 +757,10 @@ class TimerService : Service() {
                 "GONG" -> {
                     val decay = exp(-3.5 * progress)
                     decay * (
-                        sin(2.0 * PI * 420.0 * time) +
-                            0.55 * sin(2.0 * PI * 630.0 * time) +
-                            0.3 * sin(2.0 * PI * 1_050.0 * time)
-                        ) / 1.85
+                            sin(2.0 * PI * 420.0 * time) +
+                                    0.55 * sin(2.0 * PI * 630.0 * time) +
+                                    0.3 * sin(2.0 * PI * 1_050.0 * time)
+                            ) / 1.85
                 }
                 else -> sin(2.0 * PI * 880.0 * time)
             }
@@ -711,49 +782,34 @@ class TimerService : Service() {
 
     private fun speakCountdown(secondsRemaining: Int) {
         if (!AppSettingsStore.settings.value.voiceEnabled) return
-        val spokenNumber = when (secondsRemaining) {
-            3 -> "Три"
-            2 -> "Два"
-            1 -> "Один"
-            else -> return
+        val word = when (secondsRemaining) {
+            3 -> "Три"; 2 -> "Два"; 1 -> "Один"; else -> return
         }
         mainHandler.post {
             if (textToSpeechReady) {
-                textToSpeech?.speak(
-                    spokenNumber,
-                    TextToSpeech.QUEUE_FLUSH,
-                    null,
-                    "countdown-$currentIndex-$secondsRemaining"
-                )
+                textToSpeech?.speak(word, TextToSpeech.QUEUE_FLUSH, null, "countdown-$currentIndex-$secondsRemaining")
             }
         }
-    }
-
-    private fun releasePlayer() {
-        mediaPlayer?.let { player ->
-            if (player.isPlaying) player.stop()
-            player.reset()
-            player.release()
-        }
-        mediaPlayer = null
-        playingAudioUri = null
     }
 
     private fun releaseMediaResources() {
         mainHandler.post {
-            releasePlayer()
-            toneTrack?.let { track ->
-                if (track.playState == AudioTrack.PLAYSTATE_PLAYING) track.stop()
-                track.release()
+            cancelVolumeAnimator()
+            releasePlayerSafely()
+            toneTrack?.let { t ->
+                runCatching {
+                    if (t.playState == AudioTrack.PLAYSTATE_PLAYING) t.stop()
+                    t.release()
+                }
             }
             toneTrack = null
-            textToSpeech?.stop()
-            textToSpeech?.shutdown()
+            runCatching {
+                textToSpeech?.stop()
+                textToSpeech?.shutdown()
+            }
             textToSpeech = null
             textToSpeechReady = false
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                audioFocusRequest?.let(audioManager::abandonAudioFocusRequest)
-            }
+            audioFocusRequest?.let { runCatching { audioManager.abandonAudioFocusRequest(it) } }
             audioFocusRequest = null
         }
     }
@@ -764,9 +820,7 @@ class TimerService : Service() {
         super.onDestroy()
         timerJob?.cancel()
         serviceScope.cancel()
-        if (wakeLock?.isHeld == true) {
-            wakeLock?.release()
-        }
+        if (wakeLock?.isHeld == true) wakeLock?.release()
         releaseMediaResources()
     }
 }
