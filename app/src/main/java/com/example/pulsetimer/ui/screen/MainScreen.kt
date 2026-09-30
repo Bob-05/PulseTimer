@@ -1,9 +1,14 @@
 package com.pulsetimer.ui.screen
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,6 +38,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -55,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pulsetimer.data.entity.TemplateEntity
+import com.pulsetimer.service.TimerService
 import com.pulsetimer.viewmodel.TimerViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -68,9 +75,13 @@ fun MainScreen(
     onSettingsClick: () -> Unit
 ) {
     val templates by viewModel.templates.collectAsState()
+    val timerState by viewModel.timerState.collectAsState()
     val pagerState = rememberPagerState(pageCount = { templates.size })
     val scope = rememberCoroutineScope()
     var deletingId by remember { mutableStateOf<Long?>(null) }
+
+    val hasActiveWorkout =
+        timerState.isRunning && !timerState.isFinished && timerState.templateId > 0L
 
     LaunchedEffect(templates.size) {
         if (templates.isNotEmpty() && pagerState.currentPage >= templates.size) {
@@ -88,15 +99,36 @@ fun MainScreen(
                     }
                 }
             )
-        },
+        }
     ) { padding ->
+        if (hasActiveWorkout) {
+            // Пока тренировка активна — по центру только карточка возврата.
+            // Остальные шаблоны и кнопки недоступны.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(horizontal = 24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                ActiveWorkoutCard(
+                    state = timerState,
+                    onResume = {
+                        onStartClick(timerState.templateId, timerState.templateName)
+                    },
+                    onStop = { viewModel.stopTimer() }
+                )
+            }
+            return@Scaffold
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            androidx.compose.material3.OutlinedButton(
+            OutlinedButton(
                 onClick = { viewModel.addTemplate("Новая тренировка", "Добавьте описание") },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -206,6 +238,111 @@ fun MainScreen(
                         fontSize = 24.sp,
                         fontWeight = FontWeight.Bold
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActiveWorkoutCard(
+    state: TimerService.ServiceTimerState,
+    onResume: () -> Unit,
+    onStop: () -> Unit
+) {
+    val pulse = rememberInfiniteTransition(label = "active_workout")
+    val dotAlpha by pulse.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.35f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "dot_alpha"
+    )
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(28.dp))
+            .clickable(onClick = onResume),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 10.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .graphicsLayer { alpha = if (state.isPaused) 0.5f else dotAlpha }
+                        .background(
+                            color = if (state.isPaused) Color(0xFF9E9E9E) else Color(0xFF4CAF50),
+                            shape = CircleShape
+                        )
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = if (state.isPaused) "Пауза" else "Активная тренировка",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+            Text(
+                text = state.templateName.ifEmpty { "Тренировка" },
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = state.currentIntervalName.ifEmpty { "…" },
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(Modifier.height(20.dp))
+            Text(
+                text = formatTime(state.timeRemainingSeconds),
+                style = MaterialTheme.typography.displayMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Интервал ${state.currentIntervalIndex + 1} из ${state.totalIntervals}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(Modifier.height(24.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Button(
+                    onClick = onResume,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(56.dp),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Text("Вернуться", fontWeight = FontWeight.Bold)
+                }
+                OutlinedButton(
+                    onClick = onStop,
+                    modifier = Modifier.height(56.dp),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Text("Стоп")
                 }
             }
         }

@@ -160,6 +160,11 @@ class TimerService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // ★ КРИТИЧНО: должен быть вызван синхронно и до любого I/O,
+        // иначе OS выбросит ForegroundServiceDidNotStartInTimeException.
+        val isNewSession = intent?.action == ACTION_START
+        startForeground(NOTIFICATION_ID, buildForegroundNotification(isNewSession))
+
         when (intent?.action) {
             ACTION_START -> {
                 val templateId = intent.getLongExtra(EXTRA_TEMPLATE_ID, -1L)
@@ -179,6 +184,36 @@ class TimerService : Service() {
         Log.i(TAG, "Task removed — timer keeps running")
     }
 
+    /**
+     * Возвращает «реальное» уведомление, если сессия уже идёт и данные загружены,
+     * иначе — плейсхолдер, чтобы успеть зарегистрироваться в foreground за 5 секунд.
+     */
+    private fun buildForegroundNotification(isNewSession: Boolean): Notification {
+        return if (!isNewSession && activeTemplateId != null && intervals.isNotEmpty()) {
+            buildNotification()
+        } else {
+            buildLoadingNotification()
+        }
+    }
+
+    private fun buildLoadingNotification(): Notification {
+        val contentIntent = PendingIntent.getActivity(
+            this, 0,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("PulseTimer")
+            .setContentText("Подготовка тренировки…")
+            .setSmallIcon(android.R.drawable.ic_popup_reminder)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(contentIntent)
+            .build()
+    }
+
     private fun startTimer(templateId: Long) {
         if (activeTemplateId != null) finalizeAbandonedSession()
         timerJob?.cancel()
@@ -187,19 +222,35 @@ class TimerService : Service() {
         if (wakeLock?.isHeld == true) wakeLock?.release()
 
         serviceScope.launch(Dispatchers.IO) {
-            val template = dao.getTemplateById(templateId).first()
+            val template = try {
+                dao.getTemplateById(templateId).first()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load template $templateId", e)
+                null
+            }
             if (template == null) {
                 Log.e(TAG, "Template $templateId was not found")
-                stopSelf()
+                withContext(Dispatchers.Main) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
                 return@launch
             }
             templateAudioUri = template.audioUri
             templateBackgroundType = template.backgroundType
             templateBackgroundValue = template.backgroundValue
             templateVibrationPatternId = template.vibrationPatternId
-            intervals = dao.getIntervalsByTemplateId(templateId).first()
+            intervals = try {
+                dao.getIntervalsByTemplateId(templateId).first()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load intervals", e)
+                emptyList()
+            }
             if (intervals.isEmpty()) {
-                stopSelf()
+                withContext(Dispatchers.Main) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
                 return@launch
             }
 
@@ -212,7 +263,13 @@ class TimerService : Service() {
             acquireWakeLockForRemainingSession()
             requestAudioFocus()
             startMusic(intervals.first().audioUri ?: templateAudioUri ?: AppSettingsStore.settings.value.musicUri)
-            startForeground(NOTIFICATION_ID, buildNotification())
+
+            // Теперь, когда данные загружены — заменяем плейсхолдер на реальное уведомление
+            withContext(Dispatchers.Main) {
+                if (activeTemplateId != null) {
+                    startForeground(NOTIFICATION_ID, buildNotification())
+                }
+            }
             runInterval()
         }
     }
@@ -312,7 +369,6 @@ class TimerService : Service() {
                     }
                 }
             }
-            // Сюда попадаем только если timeRemaining <= 0 или isPaused
             if (!isPaused) {
                 currentIndex++
                 runInterval()
@@ -708,7 +764,6 @@ class TimerService : Service() {
             }
             runCatching { track.play() }
 
-            // Автоприглушение фоновой музыки на время сигнала
             val player = mediaPlayer
             val currentVolume = settings.soundVolume
             if (player.safeIsPlaying) {

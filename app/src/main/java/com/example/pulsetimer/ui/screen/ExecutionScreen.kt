@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -92,11 +93,32 @@ import java.util.Locale
 @Composable
 fun ExecutionScreen(
     viewModel: TimerViewModel = viewModel(),
+    templateId: Long,
     templateName: String,
     onFinish: () -> Unit
 ) {
     val timerState by viewModel.timerState.collectAsState()
     val settings by AppSettingsStore.settings.collectAsState()
+
+    // Готовность сервиса: шаблон и интервалы уже загружены из БД
+    val isReady = timerState.totalIntervals > 0 && timerState.templateId == templateId
+
+    // Пока не готово — показываем спиннер. Первая реальная композиция AnimatedContent
+    // получит уже корректный PhaseKey, поэтому переход «пусто → реально» не проигрывается.
+    if (!isReady) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xFF0B0B0B)),
+            contentAlignment = Alignment.Center
+        ) {
+            CircularProgressIndicator(
+                color = Color.White,
+                strokeWidth = 3.dp
+            )
+        }
+        return
+    }
 
     // Status Bar в тон фазы
     val view = LocalView.current
@@ -143,7 +165,11 @@ fun ExecutionScreen(
             targetValue = currentPhaseColor,
             label = "smooth_bg"
         )
-        Box(Modifier.fillMaxSize().background(smoothBg))
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(smoothBg)
+        )
 
         AnimatedContent(
             targetState = PhaseKey(
@@ -234,7 +260,6 @@ private fun PhaseFullScreen(
     onFinish: () -> Unit
 ) {
     val phaseColor = parseColor(phase.colorHex)
-    // Размер шрифта таймера — без BoxWithConstraints (Lint ругался на неиспользуемый scope)
     val screenWidthDp = LocalConfiguration.current.screenWidthDp.toFloat()
     val timerFontSize = ((screenWidthDp - 48f) / 3.6f).coerceIn(56f, 120f).sp
 
@@ -303,7 +328,9 @@ private fun PhaseFullScreen(
             if (isFinished) {
                 Button(
                     onClick = onFinish,
-                    modifier = Modifier.fillMaxWidth().height(64.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(64.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Color.White.copy(alpha = 0.3f)
                     )
@@ -318,13 +345,17 @@ private fun PhaseFullScreen(
                 ) {
                     IconButton(
                         onClick = onStop,
-                        modifier = Modifier.size(64.dp).background(Color.White.copy(alpha = 0.2f), CircleShape)
+                        modifier = Modifier
+                            .size(64.dp)
+                            .background(Color.White.copy(alpha = 0.2f), CircleShape)
                     ) {
                         Icon(Icons.Default.Stop, "Стоп", tint = Color.White, modifier = Modifier.size(32.dp))
                     }
                     IconButton(
                         onClick = onPauseToggle,
-                        modifier = Modifier.size(80.dp).background(Color.White.copy(alpha = 0.3f), CircleShape)
+                        modifier = Modifier
+                            .size(80.dp)
+                            .background(Color.White.copy(alpha = 0.3f), CircleShape)
                     ) {
                         Icon(
                             imageVector = if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
@@ -335,9 +366,14 @@ private fun PhaseFullScreen(
                     }
                     IconButton(
                         onClick = onSkip,
-                        modifier = Modifier.size(64.dp).background(Color.White.copy(alpha = 0.2f), CircleShape)
+                        modifier = Modifier
+                            .size(64.dp)
+                            .background(Color.White.copy(alpha = 0.2f), CircleShape)
                     ) {
-                        Icon(Icons.Default.KeyboardArrowRight, "Пропустить", tint = Color.White, modifier = Modifier.size(32.dp))
+                        Icon(
+                            Icons.Default.KeyboardArrowRight, "Пропустить",
+                            tint = Color.White, modifier = Modifier.size(32.dp)
+                        )
                     }
                 }
             }
@@ -367,7 +403,11 @@ private fun PhaseImageBackground(uri: String, fallbackColor: Color) {
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()
         )
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)))
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.5f))
+        )
     } else {
         StaticPhaseBackground(fallbackColor)
     }
@@ -437,7 +477,11 @@ private fun VideoPhaseBackground(uri: String, isPaused: Boolean, fallbackColor: 
         StaticPhaseBackground(fallbackColor)
     } else {
         AndroidView(factory = { videoView }, modifier = Modifier.fillMaxSize())
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)))
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.5f))
+        )
     }
 }
 

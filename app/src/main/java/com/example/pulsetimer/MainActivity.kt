@@ -8,7 +8,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -16,7 +15,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.pulsetimer.data.AppSettingsStore
-import com.pulsetimer.service.TimerService
 import com.pulsetimer.ui.navigation.Screen
 import com.pulsetimer.ui.screen.EditorScreen
 import com.pulsetimer.ui.screen.ExecutionScreen
@@ -37,22 +35,6 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val navController = rememberNavController()
-
-                    // Авто-возврат к активной тренировке при запуске приложения
-                    LaunchedEffect(Unit) {
-                        val s = TimerService.state.value
-                        if (s.isRunning && !s.isFinished && s.templateId > 0L) {
-                            val current = navController.currentBackStackEntry?.destination?.route
-                            val execRoute = "${Screen.Execution.route}/{templateId}/{templateName}"
-                            if (current != execRoute) {
-                                navController.navigate(
-                                    "${Screen.Execution.route}/${s.templateId}/${Uri.encode(s.templateName)}"
-                                ) {
-                                    launchSingleTop = true
-                                }
-                            }
-                        }
-                    }
 
                     NavHost(
                         navController = navController,
@@ -77,10 +59,13 @@ class MainActivity : ComponentActivity() {
                         composable(
                             route = "${Screen.Execution.route}/{templateId}/{templateName}"
                         ) { backStackEntry ->
+                            val templateId = backStackEntry.arguments
+                                ?.getString("templateId")?.toLongOrNull() ?: 0L
                             val templateName = Uri.decode(
                                 backStackEntry.arguments?.getString("templateName") ?: ""
                             )
                             ExecutionScreen(
+                                templateId = templateId,
                                 templateName = templateName,
                                 onFinish = {
                                     navController.navigate(Screen.Main.route) {
@@ -93,7 +78,8 @@ class MainActivity : ComponentActivity() {
                         composable(
                             route = "${Screen.Editor.route}/{templateId}"
                         ) { backStackEntry ->
-                            val templateId = backStackEntry.arguments?.getString("templateId")?.toLongOrNull() ?: 0L
+                            val templateId = backStackEntry.arguments
+                                ?.getString("templateId")?.toLongOrNull() ?: 0L
                             EditorScreen(
                                 templateId = templateId,
                                 onBack = { navController.popBackStack() }
