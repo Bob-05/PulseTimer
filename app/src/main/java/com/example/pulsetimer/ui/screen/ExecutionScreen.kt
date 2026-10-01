@@ -518,7 +518,7 @@ private fun decodeSampledBitmap(
         }
         if (opts.outWidth <= 0 || opts.outHeight <= 0) return null
         var sample = 1
-        while (opts.outWidth / (sample * 2) >= reqSize && opts.outHeight / (sample * 2) >= reqSize) {
+        while (maxOf(opts.outWidth, opts.outHeight) / sample > reqSize) {
             sample *= 2
         }
         val opts2 = BitmapFactory.Options().apply { inSampleSize = sample }

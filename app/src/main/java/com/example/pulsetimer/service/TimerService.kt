@@ -19,6 +19,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -32,11 +33,13 @@ import com.pulsetimer.data.database.AppDatabase
 import com.pulsetimer.data.entity.IntervalEntity
 import com.pulsetimer.data.entity.SessionLogEntity
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -51,13 +54,15 @@ import java.util.Locale
 
 class TimerService : Service() {
 
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var timerJob: Job? = null
+    private var startJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
     private var intervals: List<IntervalEntity> = emptyList()
     private var currentIndex: Int = 0
     private var timeRemaining: Int = 0
+    private var intervalDeadlineElapsedRealtime: Long = 0L
     private var isPaused: Boolean = false
     private var templateName: String = ""
     private var templateAudioUri: String? = null
@@ -69,12 +74,15 @@ class TimerService : Service() {
 
     private var mediaPlayer: MediaPlayer? = null
     private var playingAudioUri: String? = null
+    private var requestedAudioUri: String? = null
     private var volumeAnimator: ValueAnimator? = null
     private var toneTrack: AudioTrack? = null
+    private var toneGeneration: Long = 0L
 
     private var textToSpeech: TextToSpeech? = null
     private var textToSpeechReady = false
     private var pendingSpeech: String? = null
+    private var pendingSpeechIndex: Int = -1
     private var audioFocusRequest: AudioFocusRequest? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -149,10 +157,15 @@ class TimerService : Service() {
                         .build()
                 )
                 pendingSpeech?.let { speech ->
-                    if (AppSettingsStore.settings.value.voiceEnabled) {
+                    if (AppSettingsStore.settings.value.voiceEnabled &&
+                        activeTemplateId != null &&
+                        !isPaused &&
+                        pendingSpeechIndex == currentIndex
+                    ) {
                         textToSpeech?.speak(speech, TextToSpeech.QUEUE_FLUSH, null, "interval-$currentIndex")
                     }
                     pendingSpeech = null
+                    pendingSpeechIndex = -1
                 }
             } else {
                 Log.e(TAG, "TextToSpeech initialization failed: $status")
@@ -213,45 +226,49 @@ class TimerService : Service() {
     private fun startTimer(templateId: Long) {
         if (activeTemplateId != null) finalizeAbandonedSession()
         timerJob?.cancel()
+        startJob?.cancel()
         cancelVolumeAnimator()
+        pendingSpeech = null
+        pendingSpeechIndex = -1
+        textToSpeech?.stop()
+        cancelTonePlayback()
+        requestedAudioUri = null
+        playingAudioUri = null
         releasePlayerSafely()
         if (wakeLock?.isHeld == true) wakeLock?.release()
 
-        serviceScope.launch(Dispatchers.IO) {
-            // Параллельная загрузка template и intervals
-            val templateDeferred = async {
-                try {
-                    dao.getTemplateById(templateId).first()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to load template $templateId", e)
-                    null
+        startJob = serviceScope.launch {
+            val (template, loadedIntervals) = withContext(Dispatchers.IO) {
+                coroutineScope {
+                    val templateDeferred = async {
+                        try {
+                            dao.getTemplateById(templateId).first()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to load template $templateId", e)
+                            null
+                        }
+                    }
+                    val intervalsDeferred = async {
+                        try {
+                            dao.getIntervalsByTemplateId(templateId).first()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to load intervals for template $templateId", e)
+                            emptyList()
+                        }
+                    }
+                    templateDeferred.await() to intervalsDeferred.await()
                 }
             }
-            val intervalsDeferred = async {
-                try {
-                    dao.getIntervalsByTemplateId(templateId).first()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to load intervals", e)
-                    emptyList()
-                }
-            }
-
-            val template = templateDeferred.await()
             if (template == null) {
                 Log.e(TAG, "Template $templateId was not found")
-                withContext(Dispatchers.Main) {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    stopSelf()
-                }
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
                 return@launch
             }
-
-            val loadedIntervals = intervalsDeferred.await()
             if (loadedIntervals.isEmpty()) {
-                withContext(Dispatchers.Main) {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    stopSelf()
-                }
+                Log.e(TAG, "Template $templateId has no intervals")
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
                 return@launch
             }
 
@@ -266,17 +283,16 @@ class TimerService : Service() {
 
             currentIndex = 0
             isPaused = false
-            timeRemaining = intervals.first().durationSeconds.coerceAtLeast(0)
+            timeRemaining = intervals.first().durationSeconds.coerceAtLeast(1)
             acquireWakeLockForRemainingSession()
             requestAudioFocus()
             startMusic(intervals.first().audioUri ?: templateAudioUri ?: AppSettingsStore.settings.value.musicUri)
 
-            withContext(Dispatchers.Main) {
-                if (activeTemplateId != null) {
-                    startForeground(NOTIFICATION_ID, buildNotification())
-                }
+            if (activeTemplateId != null) {
+                startForeground(NOTIFICATION_ID, buildNotification())
             }
             runInterval()
+            startJob = null
         }
     }
 
@@ -307,7 +323,9 @@ class TimerService : Service() {
 
     private fun acquireWakeLockForRemainingSession() {
         val remainingSeconds = timeRemaining.toLong() +
-                intervals.drop(currentIndex + 1).sumOf { it.durationSeconds.coerceAtLeast(0).toLong() }
+            intervals.drop(currentIndex + 1).sumOf {
+                it.durationSeconds.coerceAtLeast(0).toLong()
+            }
         wakeLock?.acquire((remainingSeconds + 60L) * 1_000L)
     }
 
@@ -318,7 +336,7 @@ class TimerService : Service() {
         }
 
         val interval = intervals[currentIndex]
-        timeRemaining = interval.durationSeconds
+        timeRemaining = interval.durationSeconds.coerceAtLeast(1)
 
         isPaused = startPaused
         updateState(
@@ -355,7 +373,20 @@ class TimerService : Service() {
     }
 
     private fun pauseTimer() {
+        if (activeTemplateId == null) return
         isPaused = true
+        timerJob?.cancel()
+        timerJob = null
+        pendingSpeech = null
+        pendingSpeechIndex = -1
+        textToSpeech?.stop()
+        cancelTonePlayback()
+        if (intervalDeadlineElapsedRealtime > 0L) {
+            timeRemaining = ((intervalDeadlineElapsedRealtime - SystemClock.elapsedRealtime() + 999L) /
+                1_000L).coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        }
+        cancelVolumeAnimator()
+        mediaPlayer.safeSetVolume(AppSettingsStore.settings.value.soundVolume)
         mainHandler.post { mediaPlayer.safePause() }
         if (wakeLock?.isHeld == true) wakeLock?.release()
         updateState(state.value.copy(isPaused = true, isRunning = false))
@@ -363,41 +394,57 @@ class TimerService : Service() {
     }
 
     private fun resumeTimer() {
-        if (!isPaused) return
+        if (!isPaused || activeTemplateId == null) return
         isPaused = false
         acquireWakeLockForRemainingSession()
         updateState(state.value.copy(isPaused = false, isRunning = true))
-        mainHandler.post { mediaPlayer.safeStart() }
+        mainHandler.post {
+            mediaPlayer.safeSetVolume(AppSettingsStore.settings.value.soundVolume)
+            mediaPlayer.safeStart()
+        }
         updateNotification()
         startCountdownLoop()
     }
 
     private fun startCountdownLoop() {
         timerJob?.cancel()
+        intervalDeadlineElapsedRealtime =
+            SystemClock.elapsedRealtime() + timeRemaining.coerceAtLeast(0).toLong() * 1_000L
         timerJob = serviceScope.launch {
-            while (timeRemaining > 0 && !isPaused) {
-                delay(1000)
-                if (!isPaused) {
-                    timeRemaining--
-                    val entity = intervals.getOrNull(currentIndex)
-                    if (entity != null) {
-                        if (timeRemaining in 1..3) {
-                            playTone(isTransition = false)
-                            vibrateForCountdown(entity.withTemplatePattern())
-                            speakCountdown(timeRemaining)
-                        }
-                        updateState(
-                            state.value.copy(
-                                timeRemainingSeconds = timeRemaining,
-                                isRunning = true,
-                                isPaused = false
-                            )
-                        )
-                        updateNotification()
-                    }
+            var lastPublishedRemaining = timeRemaining
+            while (!isPaused) {
+                val remainingMillis =
+                    intervalDeadlineElapsedRealtime - SystemClock.elapsedRealtime()
+                if (remainingMillis <= 0L) {
+                    timeRemaining = 0
+                    break
                 }
+
+                val remainingSeconds = ((remainingMillis + 999L) / 1_000L)
+                    .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                timeRemaining = remainingSeconds
+                if (remainingSeconds != lastPublishedRemaining) {
+                    val entity = intervals.getOrNull(currentIndex)
+                    if (entity != null && remainingSeconds in 1..3) {
+                        playTone(isTransition = false)
+                        vibrateForCountdown(entity.withTemplatePattern())
+                        speakCountdown(remainingSeconds)
+                    }
+                    updateState(
+                        state.value.copy(
+                            timeRemainingSeconds = remainingSeconds,
+                            isRunning = true,
+                            isPaused = false
+                        )
+                    )
+                    updateNotification()
+                    lastPublishedRemaining = remainingSeconds
+                }
+
+                val nextTickDelay = remainingMillis - (remainingSeconds - 1L) * 1_000L
+                delay(nextTickDelay.coerceAtLeast(1L))
             }
-            if (!isPaused) {
+            if (!isPaused && activeTemplateId != null) {
                 currentIndex++
                 runInterval()
             }
@@ -405,21 +452,28 @@ class TimerService : Service() {
     }
 
     private fun skipInterval() {
+        if (activeTemplateId == null) return
         timerJob?.cancel()
+        timerJob = null
+        cancelTonePlayback()
         currentIndex++
         runInterval()
     }
 
     private fun previousInterval() {
         // На первом интервале возвращаться некуда
-        if (currentIndex <= 0) return
+        if (activeTemplateId == null || currentIndex <= 0) return
         timerJob?.cancel()
+        timerJob = null
+        cancelTonePlayback()
         currentIndex--
         runInterval()
     }
 
     private fun stopTimer() {
         timerJob?.cancel()
+        startJob?.cancel()
+        startJob = null
         if (wakeLock?.isHeld == true) wakeLock?.release()
         persistWorkoutEnd(completed = false)
     }
@@ -437,6 +491,8 @@ class TimerService : Service() {
         val intervalCount = intervals.size
         val remainingSeconds = timeRemaining
         activeTemplateId = null
+        pendingSpeech = null
+        releaseMediaResources()
         val completedAt = System.currentTimeMillis()
         serviceScope.launch(Dispatchers.IO) {
             if (templateId != null) {
@@ -467,7 +523,6 @@ class TimerService : Service() {
                         timeRemainingSeconds = if (completed) 0 else remainingSeconds
                     )
                 )
-                releaseMediaResources()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
@@ -570,8 +625,10 @@ class TimerService : Service() {
     }
 
     private fun startMusic(audioUri: String?) {
-        if (audioUri == playingAudioUri) return
+        if (audioUri == requestedAudioUri) return
+        requestedAudioUri = audioUri
         mainHandler.post {
+            if (requestedAudioUri != audioUri) return@post
             releasePlayerSafely()
             playingAudioUri = audioUri
             if (audioUri == null) return@post
@@ -593,7 +650,10 @@ class TimerService : Service() {
             }
             player.setOnErrorListener { _, what, extra ->
                 Log.e(TAG, "MediaPlayer error ($what, $extra)")
-                if (mediaPlayer === player) releasePlayerSafely()
+                if (mediaPlayer === player) {
+                    requestedAudioUri = null
+                    releasePlayerSafely()
+                }
                 true
             }
             try {
@@ -601,6 +661,7 @@ class TimerService : Service() {
                 player.prepareAsync()
             } catch (e: Exception) {
                 Log.e(TAG, "Unable to open audio URI: $audioUri", e)
+                requestedAudioUri = null
                 releasePlayerSafely()
             }
         }
@@ -654,10 +715,12 @@ class TimerService : Service() {
     }
 
     private fun performPhaseFeedback(interval: IntervalEntity) {
+        val phaseIndex = currentIndex
         val isWork = interval.name.contains("работ", true) ||
                 interval.name.contains("work", true) ||
                 interval.colorHex.equals("#FF3B30", true)
         mainHandler.post {
+            if (activeTemplateId == null || currentIndex != phaseIndex) return@post
             playTone(isTransition = true)
             if (AppSettingsStore.settings.value.vibrationEnabled && interval.vibrationPatternId != 0) {
                 val s = vibrationStrength()
@@ -686,7 +749,9 @@ class TimerService : Service() {
 
     private fun vibrateForCountdown(interval: IntervalEntity) {
         if (!AppSettingsStore.settings.value.vibrationEnabled || interval.vibrationPatternId == 0) return
+        val phaseIndex = currentIndex
         mainHandler.post {
+            if (isPaused || activeTemplateId == null || currentIndex != phaseIndex) return@post
             val amp = vibrationStrength()
             val effect = if (vibrator.hasAmplitudeControl())
                 VibrationEffect.createOneShot(100, amp)
@@ -709,18 +774,22 @@ class TimerService : Service() {
     }
 
     private fun playTone(isTransition: Boolean) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { playTone(isTransition) }
+            return
+        }
         val settings = AppSettingsStore.settings.value
         if (!settings.soundEnabled) return
-        mainHandler.post {
-            val durationMillis = when {
-                settings.toneType == "GONG" && isTransition -> 700
-                isTransition -> 450
-                else -> 120
-            }
+        val durationMillis = when {
+            settings.toneType == "GONG" && isTransition -> 700
+            isTransition -> 450
+            else -> 120
+        }
+        val generation = ++toneGeneration
+        toneTrack?.let(::releaseToneTrack)
+
+        serviceScope.launch(Dispatchers.Default) {
             val samples = createToneSamples(settings.toneType, durationMillis, settings.soundVolume)
-
-            toneTrack?.let(::releaseToneTrack)
-
             val track = try {
                 AudioTrack.Builder()
                     .setAudioAttributes(
@@ -741,52 +810,76 @@ class TimerService : Service() {
                     .build()
             } catch (e: Exception) {
                 Log.e(TAG, "Unable to create AudioTrack", e)
-                return@post
+                return@launch
             }
-            toneTrack = track
             track.setVolume(1f)
             val written = try {
                 track.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
             } catch (e: Exception) {
-                releaseToneTrack(track)
-                return@post
+                Log.e(TAG, "Unable to write tone samples", e)
+                track.release()
+                return@launch
             }
             if (written != samples.size) {
-                releaseToneTrack(track)
-                return@post
+                Log.e(TAG, "Incomplete tone write: $written of ${samples.size} samples")
+                track.release()
+                return@launch
             }
-            runCatching { track.play() }
 
-            val player = mediaPlayer
-            val currentVolume = settings.soundVolume
-            if (player.safeIsPlaying) {
-                cancelVolumeAnimator()
-                volumeAnimator = ValueAnimator.ofFloat(1f, 0.5f).apply {
-                    duration = 140
-                    addUpdateListener { anim ->
-                        val level = (anim.animatedValue as Float) * currentVolume
-                        if (mediaPlayer === player) player.safeSetVolume(level)
+            try {
+                withContext(Dispatchers.Main.immediate) {
+                    if (generation != toneGeneration ||
+                        !AppSettingsStore.settings.value.soundEnabled
+                    ) {
+                        track.release()
+                        return@withContext
                     }
-                    start()
-                }
-            }
 
-            mainHandler.postDelayed({
-                if (toneTrack === track) {
-                    releaseToneTrack(track)
-                }
-                if (mediaPlayer === player && player.safeIsPlaying) {
-                    cancelVolumeAnimator()
-                    volumeAnimator = ValueAnimator.ofFloat(0.5f, 1f).apply {
-                        duration = 250
-                        addUpdateListener { anim ->
-                            val level = (anim.animatedValue as Float) * currentVolume
-                            if (mediaPlayer === player) player.safeSetVolume(level)
+                    toneTrack?.let(::releaseToneTrack)
+                    toneTrack = track
+                    try {
+                        track.play()
+                    } catch (e: IllegalStateException) {
+                        Log.e(TAG, "Unable to play tone", e)
+                        releaseToneTrack(track)
+                        return@withContext
+                    }
+
+                    val player = mediaPlayer
+                    val currentVolume = settings.soundVolume
+                    if (player.safeIsPlaying) {
+                        cancelVolumeAnimator()
+                        volumeAnimator = ValueAnimator.ofFloat(1f, 0.5f).apply {
+                            duration = 140
+                            addUpdateListener { anim ->
+                                val level = (anim.animatedValue as Float) * currentVolume
+                                if (mediaPlayer === player) player.safeSetVolume(level)
+                            }
+                            start()
                         }
-                        start()
                     }
+
+                    mainHandler.postDelayed({
+                        if (toneTrack === track) {
+                            releaseToneTrack(track)
+                        }
+                        if (mediaPlayer === player && player.safeIsPlaying) {
+                            cancelVolumeAnimator()
+                            volumeAnimator = ValueAnimator.ofFloat(0.5f, 1f).apply {
+                                duration = 250
+                                addUpdateListener { anim ->
+                                    val level = (anim.animatedValue as Float) * currentVolume
+                                    if (mediaPlayer === player) player.safeSetVolume(level)
+                                }
+                                start()
+                            }
+                        }
+                    }, durationMillis.toLong())
                 }
-            }, durationMillis.toLong())
+            } catch (e: CancellationException) {
+                runCatching { track.release() }
+                throw e
+            }
         }
     }
 
@@ -806,6 +899,7 @@ class TimerService : Service() {
                                     0.3 * sin(2.0 * PI * 1_050.0 * time)
                             ) / 1.85
                 }
+
                 else -> sin(2.0 * PI * 880.0 * time)
             }
             val edge = minOf(1.0, progress * 35.0, (1.0 - progress) * 35.0)
@@ -813,13 +907,21 @@ class TimerService : Service() {
         }
     }
 
+    private fun cancelTonePlayback() {
+        toneGeneration++
+        toneTrack?.let(::releaseToneTrack)
+    }
+
     private fun speakInterval(name: String) {
         if (!AppSettingsStore.settings.value.voiceEnabled) return
+        val phaseIndex = currentIndex
         mainHandler.post {
+            if (activeTemplateId == null || currentIndex != phaseIndex || isPaused) return@post
             if (textToSpeechReady) {
                 textToSpeech?.speak(name, TextToSpeech.QUEUE_FLUSH, null, "interval-$currentIndex")
             } else {
                 pendingSpeech = name
+                pendingSpeechIndex = phaseIndex
             }
         }
     }
@@ -829,16 +931,21 @@ class TimerService : Service() {
         val word = when (secondsRemaining) {
             3 -> "Три"; 2 -> "Два"; 1 -> "Один"; else -> return
         }
+        val phaseIndex = currentIndex
         mainHandler.post {
-            if (textToSpeechReady) {
-                textToSpeech?.speak(word, TextToSpeech.QUEUE_FLUSH, null, "countdown-$currentIndex-$secondsRemaining")
+            if (textToSpeechReady && !isPaused && currentIndex == phaseIndex) {
+                textToSpeech?.speak(word, TextToSpeech.QUEUE_ADD, null, "countdown-$currentIndex-$secondsRemaining")
             }
         }
     }
 
     private fun releaseMediaResources() {
-        mainHandler.post {
+        toneGeneration++
+        pendingSpeech = null
+        pendingSpeechIndex = -1
+        val release = {
             cancelVolumeAnimator()
+            requestedAudioUri = null
             releasePlayerSafely()
             toneTrack?.let(::releaseToneTrack)
             runCatching {
@@ -849,6 +956,11 @@ class TimerService : Service() {
             textToSpeechReady = false
             audioFocusRequest?.let { runCatching { audioManager.abandonAudioFocusRequest(it) } }
             audioFocusRequest = null
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            release()
+        } else {
+            mainHandler.post(release)
         }
     }
 
