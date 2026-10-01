@@ -23,13 +23,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -45,6 +48,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -61,6 +65,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -108,8 +113,6 @@ fun MainScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         if (hasActiveWorkout) {
-            // Пока тренировка активна — по центру только карточка возврата.
-            // Остальные шаблоны и кнопки недоступны.
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -369,6 +372,14 @@ private fun ActiveWorkoutCard(
     }
 }
 
+/**
+ * Высота карточки шаблона фиксирована, чтобы все страницы pager'а выглядели
+ * одинаково независимо от длины описания. Слот под кнопку «Показать полностью»
+ * зарезервирован всегда — даже если кнопка не показывается.
+ */
+private val CARD_HEIGHT = 380.dp
+private const val CARD_DESC_MAX_LINES = 4
+
 @Composable
 fun TemplateCard(
     template: TemplateEntity,
@@ -376,48 +387,138 @@ fun TemplateCard(
     onEdit: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Card(
+    var showFullDescription by remember(template.id) { mutableStateOf(false) }
+    var descriptionOverflows by remember(template.id) { mutableStateOf(false) }
+    val description = template.description.trim()
+
+    Box(
         modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 32.dp),
-        shape = RoundedCornerShape(24.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+            .fillMaxSize()
+            .padding(vertical = 16.dp),
+        contentAlignment = Alignment.Center
     ) {
-        Column(
+        Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .height(CARD_HEIGHT),
+            shape = RoundedCornerShape(24.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
         ) {
-            Text(
-                text = template.iconEmoji,
-                style = MaterialTheme.typography.displayMedium
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(
-                text = template.name,
-                style = MaterialTheme.typography.headlineLarge
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = template.description,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(24.dp))
-            Row {
-                IconButton(onClick = onEdit) {
-                    Icon(Icons.Default.Edit, contentDescription = "Редактировать")
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = template.iconEmoji,
+                    style = MaterialTheme.typography.displayMedium
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = template.name,
+                    style = MaterialTheme.typography.headlineMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Описание: занимает всё оставшееся место, ограничено 4 строками.
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.TopCenter
+                ) {
+                    if (description.isEmpty()) {
+                        Text(
+                            text = "Без описания",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else {
+                        Text(
+                            text = description,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            maxLines = CARD_DESC_MAX_LINES,
+                            overflow = TextOverflow.Ellipsis,
+                            onTextLayout = { result ->
+                                descriptionOverflows = result.hasVisualOverflow
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
-                Spacer(modifier = Modifier.width(16.dp))
-                IconButton(onClick = onDelete) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = "Удалить",
-                        tint = MaterialTheme.colorScheme.error
-                    )
+
+                // Зарезервированный слот под кнопку «Показать полностью».
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(40.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (descriptionOverflows) {
+                        TextButton(onClick = { showFullDescription = true }) {
+                            Text(
+                                text = "Показать полностью",
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onEdit) {
+                        Icon(Icons.Default.Edit, contentDescription = "Редактировать")
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    IconButton(onClick = onDelete) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "Удалить",
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
             }
         }
+    }
+
+    if (showFullDescription) {
+        AlertDialog(
+            onDismissRequest = { showFullDescription = false },
+            title = {
+                Text(
+                    text = template.name,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState())
+                ) {
+                    Text(
+                        text = description.ifEmpty { "Без описания" },
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showFullDescription = false }) {
+                    Text("Закрыть")
+                }
+            }
+        )
     }
 }
