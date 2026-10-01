@@ -848,7 +848,10 @@ class TimerService : Service() {
         val settings = AppSettingsStore.settings.value
         if (!settings.soundEnabled) return
         val durationMillis = when {
-            settings.toneType == "GONG" && isTransition -> 700
+            isTransition && settings.toneType == "GONG" -> 700
+            isTransition && settings.toneType == "CHIME" -> 600
+            isTransition && settings.toneType == "DOUBLE" -> 360
+            isTransition && settings.toneType == "DIGITAL" -> 420
             isTransition -> 450
             else -> 120
         }
@@ -958,6 +961,35 @@ class TimerService : Service() {
             val progress = index.toDouble() / sampleCount
             val wave = when (type) {
                 "WHISTLE" -> sin(2.0 * PI * (1_400.0 + 800.0 * progress) * time)
+                "DOUBLE" -> {
+                    val pulseProgress = when {
+                        progress < 0.42 -> progress / 0.42
+                        progress in 0.58..1.0 -> (progress - 0.58) / 0.42
+                        else -> 0.0
+                    }
+                    sin(2.0 * PI * 880.0 * time) *
+                            minOf(1.0, pulseProgress * 12.0, (1.0 - pulseProgress) * 12.0)
+                }
+                "DIGITAL" -> {
+                    val noteProgress = (progress * 3.0).coerceAtMost(2.999999)
+                    val noteIndex = noteProgress.toInt()
+                    val notePhase = noteProgress - noteIndex
+                    val frequency = when (noteIndex) {
+                        0 -> 523.25
+                        1 -> 659.25
+                        else -> 783.99
+                    }
+                    sin(2.0 * PI * frequency * time) *
+                            minOf(1.0, notePhase * 12.0, (1.0 - notePhase) * 12.0)
+                }
+                "CHIME" -> {
+                    val decay = exp(-4.0 * progress)
+                    decay * (
+                            sin(2.0 * PI * 659.25 * time) +
+                                    0.45 * sin(2.0 * PI * 1_318.5 * time) +
+                                    0.2 * sin(2.0 * PI * 1_977.75 * time)
+                            ) / 1.65
+                }
                 "GONG" -> {
                     val decay = exp(-3.5 * progress)
                     decay * (

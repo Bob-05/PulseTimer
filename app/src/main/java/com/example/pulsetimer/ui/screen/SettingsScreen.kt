@@ -255,7 +255,10 @@ fun SettingsScreen(
                     choices = listOf(
                         "CLASSIC" to "Зуммер",
                         "WHISTLE" to "Свисток",
-                        "GONG" to "Гонг"
+                        "GONG" to "Гонг",
+                        "DOUBLE" to "Двойной импульс",
+                        "DIGITAL" to "Цифровой сигнал",
+                        "CHIME" to "Колокольчик"
                     ),
                     selected = settings.toneType,
                     onSelected = { value ->
@@ -347,7 +350,9 @@ fun SettingsScreen(
                         "FADE" to "Затухание",
                         "ZOOM" to "Масштаб",
                         "GLIDE" to "Скольжение",
-                        "BOUNCE" to "Отскок"
+                        "BOUNCE" to "Отскок",
+                        "DEPTH" to "Глубина",
+                        "SPRING_UP" to "Пружинный подъём"
                     ),
                     selected = settings.intervalAnimation,
                     onSelected = { value ->

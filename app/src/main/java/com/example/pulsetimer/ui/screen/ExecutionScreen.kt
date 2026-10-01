@@ -429,6 +429,23 @@ private fun phaseTransition(animation: String, direction: Int): ContentTransform
                 ) togetherWith (
                 slideOutVertically(slideSpec, targetOffsetY = { h -> -h * direction }) + fadeOut(fadeSpec)
                 )
+        "DEPTH" -> (
+                slideInHorizontally(slideSpec, initialOffsetX = { w -> w * direction / 3 }) +
+                        fadeIn(fadeSpec) +
+                        scaleIn(tween(420, easing = FastOutSlowInEasing), initialScale = 0.78f)
+                ) togetherWith (
+                slideOutHorizontally(slideSpec, targetOffsetX = { w -> -w * direction / 3 }) +
+                        fadeOut(fadeSpec) +
+                        scaleOut(tween(420, easing = FastOutSlowInEasing), targetScale = 1.12f)
+                )
+        "SPRING_UP" -> {
+            val spec: FiniteAnimationSpec<IntOffset> = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessLow
+            )
+            slideInVertically(spec, initialOffsetY = { h -> h * direction }) togetherWith
+                    slideOutVertically(spec, targetOffsetY = { h -> -h * direction })
+        }
         "BOUNCE" -> {
             val spec: FiniteAnimationSpec<IntOffset> = spring(
                 dampingRatio = Spring.DampingRatioMediumBouncy,
