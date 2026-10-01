@@ -4,6 +4,23 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// Копируем юридические документы из корня репозитория в сгенерированный
+// assets-каталог. В самом репозитории дубликаты не храним.
+//
+// Явно указываем тип Provider<Directory>: layout.buildDirectory.dir()
+// возвращает платформенный тип, и без явной аннотации Kotlin выводит
+// его как «тип с платформенной nullability» — это даёт weak warning в IDE.
+val legalAssetsDir: Provider<Directory> =
+    layout.buildDirectory.dir("generated/legalAssets")
+
+val copyLegalDocs by tasks.registering(Copy::class) {
+    from(rootProject.file("PRIVACY_POLICY.md")) { into("legal") }
+    from(rootProject.file("TERMS_OF_USE.md")) { into("legal") }
+    into(legalAssetsDir)
+}
+
+tasks.named("preBuild") { dependsOn(copyLegalDocs) }
+
 android {
     namespace = "com.pulsetimer"
     compileSdk {
@@ -37,6 +54,19 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+
+    sourceSets {
+        getByName("main") {
+            // Подключаем сгенерированный каталог как дополнительный source set
+            // для assets. К моменту сборки APK файлы уже скопированы — за это
+            // отвечает зависимость preBuild → copyLegalDocs.
+            //
+            // ВАЖНО: передаём File, а не Provider<Directory>. AGP 8.x не
+            // принимает Provider в SourceSet API и падает с ошибкой
+            // «You cannot add Provider instances to the Android SourceSet API».
+            assets.srcDir(legalAssetsDir.get().asFile)
+        }
     }
 }
 
