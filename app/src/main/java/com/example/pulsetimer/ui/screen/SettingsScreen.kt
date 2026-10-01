@@ -8,7 +8,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -180,9 +182,8 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
-            // Горизонтальные отступы 16.dp + дополнительный верхний отступ 12.dp,
-            // чтобы блоки не прилипали к TopAppBar. Нижний отступ — «воздух» под
-            // последним блоком.
+            // Отступ сверху 12dp — блоки не прилипают к TopAppBar.
+            // Снизу 24dp — «воздух» под последним блоком.
             contentPadding = PaddingValues(
                 start = 16.dp,
                 end = 16.dp,
@@ -601,7 +602,8 @@ fun SettingsScreen(
  *  - шапка с emoji-чипом, заголовком, подзаголовком и шевроном;
  *  - шеврон плавно вращается 0° ↔ 180° (animateFloatAsState);
  *  - контент раскрывается/сворачивается через AnimatedVisibility
- *    с expandVertically + fadeIn / shrinkVertically + fadeOut.
+ *    со spring-спецификацией (DampingRatioNoBouncy): движение «живое»,
+ *    но без overshoot — высота не «выглядывает» за пределы карточки.
  */
 @Composable
 private fun CollapsibleSettingsGroup(
@@ -653,6 +655,8 @@ private fun CollapsibleSettingsGroup(
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
                     )
                 }
+                // Шеврон: tween, а не spring — при повороте на 180° spring
+                // дал бы overshoot и иконка «выглядывала» бы за границы.
                 val rotation by animateFloatAsState(
                     targetValue = if (expanded) 180f else 0f,
                     animationSpec = tween(
@@ -672,9 +676,9 @@ private fun CollapsibleSettingsGroup(
             AnimatedVisibility(
                 visible = expanded,
                 enter = expandVertically(
-                    animationSpec = tween(
-                        durationMillis = 320,
-                        easing = FastOutSlowInEasing
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMedium
                     ),
                     expandFrom = Alignment.Top
                 ) + fadeIn(
@@ -684,9 +688,9 @@ private fun CollapsibleSettingsGroup(
                     )
                 ),
                 exit = shrinkVertically(
-                    animationSpec = tween(
-                        durationMillis = 260,
-                        easing = FastOutSlowInEasing
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMedium
                     ),
                     shrinkTowards = Alignment.Top
                 ) + fadeOut(

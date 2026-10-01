@@ -12,6 +12,7 @@ import com.pulsetimer.service.TimerService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
@@ -45,6 +46,14 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
     val timerState: StateFlow<TimerService.ServiceTimerState> = TimerService.state
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), TimerService.ServiceTimerState())
 
+    /**
+     * ID тренировки, которую пользователь только что добавил.
+     * MainScreen использует это значение, чтобы дождаться появления шаблона
+     * в списке и запустить последовательность «скролл → анимация появления».
+     */
+    private val _recentlyAddedTemplateId = MutableStateFlow<Long?>(null)
+    val recentlyAddedTemplateId: StateFlow<Long?> = _recentlyAddedTemplateId.asStateFlow()
+
     fun selectTemplate(id: Long) { selectedTemplateId.value = id }
 
     fun clearSelectedTemplate() { selectedTemplateId.value = null }
@@ -64,7 +73,19 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addTemplate(name: String, description: String) {
         viewModelScope.launch {
-            dao.insertTemplate(TemplateEntity(name = name, description = description))
+            val id = dao.insertTemplate(TemplateEntity(name = name, description = description))
+            _recentlyAddedTemplateId.value = id
+        }
+    }
+
+    /**
+     * Сброс флага после проигрывания анимации появления карточки.
+     * Принимает id, чтобы карточка, чья анимация завершилась с задержкой,
+     * не сбрасывала флаг уже другой (только что добавленной) тренировки.
+     */
+    fun clearRecentlyAddedTemplate(id: Long) {
+        if (_recentlyAddedTemplateId.value == id) {
+            _recentlyAddedTemplateId.value = null
         }
     }
 

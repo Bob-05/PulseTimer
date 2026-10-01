@@ -1,10 +1,13 @@
 package com.pulsetimer.ui.screen
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -57,6 +60,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,7 +76,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pulsetimer.data.entity.TemplateEntity
 import com.pulsetimer.service.TimerService
 import com.pulsetimer.viewmodel.TimerViewModel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -85,20 +93,53 @@ fun MainScreen(
 ) {
     val templates by viewModel.templates.collectAsStateWithLifecycle()
     val timerState by viewModel.timerState.collectAsStateWithLifecycle()
+    val recentlyAddedTemplateId by viewModel.recentlyAddedTemplateId.collectAsStateWithLifecycle()
     val pagerState = rememberPagerState(pageCount = { templates.size })
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     var deletingId by remember { mutableStateOf<Long?>(null) }
 
+    // id карточки, для которой УЖЕ завершён скролл и можно запускать
+    // анимацию появления. Пока null — карточки, добавленные «только что»,
+    // остаются невидимыми (см. инициализацию Animatable ниже).
+    var readyToAnimateId by remember { mutableStateOf<Long?>(null) }
+
     val hasActiveWorkout =
         (timerState.isRunning || timerState.isPaused) &&
-            !timerState.isFinished &&
-            timerState.templateId > 0L
+                !timerState.isFinished &&
+                timerState.templateId > 0L
 
     LaunchedEffect(templates.size) {
         if (templates.isNotEmpty() && pagerState.currentPage >= templates.size) {
             pagerState.animateScrollToPage(templates.size - 1)
         }
+    }
+
+    // Последовательная оркестрация: дождаться появления шаблона
+    // в СКОМПОНОВАННОМ списке → дать pager-у measure/layout, чтобы
+    // его внутренний currentPage отразил сохранение визуальной позиции
+    // по key → плавно пролистать → только затем разрешить карточке
+    // проиграть анимацию появления.
+    LaunchedEffect(Unit) {
+        viewModel.recentlyAddedTemplateId
+            .filterNotNull()
+            .collect { newId ->
+                // Ждём именно composed-состояние, а не StateFlow: значение
+                // StateFlow обновляется раньше, чем UI перекомпонуется,
+                // и animateScrollToPage может уйти в no-op по устаревшему
+                // currentPage.
+                val index = snapshotFlow { templates.indexOfFirst { it.id == newId } }
+                    .filter { it >= 0 }
+                    .first()
+
+                // Даём Compose measure/layout: при использовании `key`
+                // pager сохраняет визуальную позицию существующих карточек,
+                // а внутренний currentPage пересчитывается в layout-фазе.
+                delay(50L)
+
+                pagerState.animateScrollToPage(index)
+                readyToAnimateId = newId
+            }
     }
 
     Scaffold(
@@ -172,26 +213,73 @@ fun MainScreen(
                         .fillMaxWidth()
                         .weight(1f),
                     contentPadding = PaddingValues(horizontal = 32.dp),
-                    pageSpacing = 16.dp
+                    pageSpacing = 16.dp,
+                    // Ключ по id сохраняет визуальную позицию существующих
+                    // страниц при вставке/удалении элементов списка.
+                    key = { page -> templates.getOrNull(page)?.id ?: page }
                 ) { page ->
                     val template = templates.getOrNull(page) ?: return@HorizontalPager
                     val isDeleting = deletingId == template.id
-                    val scale by animateFloatAsState(
+                    val deleteScale by animateFloatAsState(
                         targetValue = if (isDeleting) 0.7f else 1f,
                         animationSpec = tween(durationMillis = 300),
-                        label = "template_scale_${template.id}"
+                        label = "template_delete_scale_${template.id}"
                     )
-                    val alpha by animateFloatAsState(
+                    val deleteAlpha by animateFloatAsState(
                         targetValue = if (isDeleting) 0f else 1f,
                         animationSpec = tween(durationMillis = 300),
-                        label = "template_alpha_${template.id}"
+                        label = "template_delete_alpha_${template.id}"
                     )
+
+                    // Флаг «только что добавленная» фиксируем на момент первой
+                    // композиции карточки: если бы читали значение flow-а на
+                    // каждой рекомпозиции, сброс флага после анимации заставил
+                    // бы карточку переинициализировать Animatable и «мигнуть».
+                    val isNewlyAdded = remember(template.id) {
+                        viewModel.recentlyAddedTemplateId.value == template.id
+                    }
+                    val entryScale = remember(template.id) {
+                        Animatable(if (isNewlyAdded) 0.85f else 1f)
+                    }
+                    val entryAlpha = remember(template.id) {
+                        Animatable(if (isNewlyAdded) 0f else 1f)
+                    }
+
+                    // Ждём сигнала readyToAnimateId == template.id — он приходит
+                    // уже ПОСЛЕ завершения скролла. snapshotFlow.first не отменяет
+                    // эффект при изменении readyToAnimateId для другой карточки,
+                    // поэтому быстрое двойное добавление отработает корректно.
+                    LaunchedEffect(template.id) {
+                        if (!isNewlyAdded) return@LaunchedEffect
+                        snapshotFlow { readyToAnimateId }
+                            .first { it == template.id }
+                        coroutineScope {
+                            launch {
+                                entryScale.animateTo(
+                                    targetValue = 1f,
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                                        stiffness = Spring.StiffnessMediumLow
+                                    )
+                                )
+                            }
+                            launch {
+                                entryAlpha.animateTo(
+                                    targetValue = 1f,
+                                    animationSpec = tween(durationMillis = 320)
+                                )
+                            }
+                        }
+                        viewModel.clearRecentlyAddedTemplate(template.id)
+                    }
+
                     TemplateCard(
                         template = template,
                         modifier = Modifier.graphicsLayer {
-                            scaleX = scale
-                            scaleY = scale
-                            this.alpha = alpha
+                            val combinedScale = deleteScale * entryScale.value
+                            scaleX = combinedScale
+                            scaleY = combinedScale
+                            this.alpha = deleteAlpha * entryAlpha.value
                         },
                         onDelete = {
                             if (deletingId != null) return@TemplateCard
@@ -341,14 +429,14 @@ private fun ActiveWorkoutCard(
                 style = MaterialTheme.typography.displayMedium,
                 fontWeight = FontWeight.Bold
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = "Интервал ${state.currentIntervalIndex + 1} из ${state.totalIntervals}",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(24.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)

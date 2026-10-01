@@ -25,7 +25,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -63,8 +66,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         AppSettingsStore.initialize(this)
         setContent {
-            // Флаг «главный экран уже показывался» — saveable, чтобы
-            // при повороте экрана анимация не проигрывалась заново.
+            // saveable — при повороте экрана анимация появления не повторяется.
             var showAppContent by rememberSaveable { mutableStateOf(false) }
             var showLaunchAnimation by remember {
                 mutableStateOf(!launchAnimationShown)
@@ -78,37 +80,51 @@ class MainActivity : ComponentActivity() {
                 return@setContent
             }
 
-            // Запускается ровно один раз — на первом кадре главного дерева.
+            // Запускается ровно один раз — на первом кадре дерева после сплеша.
             LaunchedEffect(Unit) {
                 showAppContent = true
             }
 
-            // Alpha: 0 → 1 за 800 мс.
+            val density = LocalDensity.current
+            // graphicsLayer.translationY работает в пикселях, поэтому dp → px
+            // конвертируем один раз.
+            val initialOffsetPx = remember(density) {
+                with(density) { 20.dp.toPx() }
+            }
+
             val contentAlpha by animateFloatAsState(
                 targetValue = if (showAppContent) 1f else 0f,
                 animationSpec = tween(
-                    durationMillis = 800,
+                    durationMillis = 700,
                     easing = FastOutSlowInEasing
                 ),
                 label = "app_content_alpha"
             )
-            // Лёгкое «разворачивание»: 0.94 → 1.0 за 900 мс.
             val contentScale by animateFloatAsState(
                 targetValue = if (showAppContent) 1f else 0.94f,
                 animationSpec = tween(
-                    durationMillis = 900,
+                    durationMillis = 800,
                     easing = FastOutSlowInEasing
                 ),
                 label = "app_content_scale"
             )
-            // Микро-подъём снизу: 18dp → 0.
             val contentOffsetY by animateFloatAsState(
-                targetValue = if (showAppContent) 0f else 18f,
+                targetValue = if (showAppContent) 0f else initialOffsetPx,
                 animationSpec = tween(
-                    durationMillis = 900,
+                    durationMillis = 800,
                     easing = FastOutSlowInEasing
                 ),
                 label = "app_content_offset_y"
+            )
+            // Blur 6dp → 0 за 400 мс. На API < 31 Modifier.blur — no-op,
+            // на новых версиях даёт эффект «наведения резкости».
+            val contentBlur by animateFloatAsState(
+                targetValue = if (showAppContent) 0f else 6f,
+                animationSpec = tween(
+                    durationMillis = 400,
+                    easing = FastOutSlowInEasing
+                ),
+                label = "app_content_blur"
             )
 
             val settings by AppSettingsStore.settings.collectAsStateWithLifecycle()
@@ -126,11 +142,12 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    // Анимируем ТОЛЬКО контент — фон Surface остаётся
-                    // непрозрачным, поэтому нет вспышек window background.
+                    // Фон Surface всегда непрозрачный — анимируется только
+                    // контент, поэтому нет вспышек window background.
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
+                            .blur(contentBlur.dp)
                             .graphicsLayer {
                                 alpha = contentAlpha
                                 scaleX = contentScale
@@ -141,9 +158,8 @@ class MainActivity : ComponentActivity() {
                         val navController = rememberNavController()
 
                         // startDestination фиксируем на момент первой композиции.
-                        // Если брать текущее значение settings на каждой рекомпозиции,
-                        // Navigation Compose пересоздаст граф при смене флага согласия
-                        // и сбросит стек — это не то поведение, которое нам нужно.
+                        // Иначе Navigation Compose пересоздаст граф при смене
+                        // флага согласия и сбросит стек.
                         val startDestination = remember {
                             val initial = AppSettingsStore.settings.value
                             when {
