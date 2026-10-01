@@ -56,6 +56,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -73,6 +74,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -106,15 +108,26 @@ fun ExecutionScreen(
     val timerState by viewModel.timerState.collectAsState()
     val settings by AppSettingsStore.settings.collectAsState()
 
-    val isReady = timerState.totalIntervals > 0 && timerState.templateId == templateId
+    val isFinished = timerState.isFinished && timerState.templateId == templateId
+    val isReady = timerState.templateId == templateId &&
+        (timerState.totalIntervals > 0 || isFinished)
 
     // Defensive: если сервис не поднял состояние за 6 секунд —
     // показываем экран ошибки вместо бесконечного спиннера.
     var timedOut by remember(templateId) { mutableStateOf(false) }
-    LaunchedEffect(templateId) {
+    LaunchedEffect(templateId, timerState.templateId, timerState.totalIntervals, timerState.isFinished) {
         timedOut = false
         delay(6_000)
-        timedOut = true
+        if (!isReady) timedOut = true
+    }
+
+    if (isFinished) {
+        CompletionScreen(
+            templateName = timerState.templateName.ifEmpty { templateName },
+            onRepeat = { viewModel.startTimer(templateId, templateName) },
+            onHome = onFinish
+        )
+        return
     }
 
     if (!isReady) {
@@ -248,16 +261,137 @@ fun ExecutionScreen(
                 timeRemaining = timerState.timeRemainingSeconds,
                 totalIntervals = timerState.totalIntervals,
                 isPaused = timerState.isPaused,
-                isFinished = timerState.isFinished,
                 animatedBackgrounds = settings.animatedBackgrounds,
                 onClose = { viewModel.stopTimer(); onFinish() },
                 onPauseToggle = {
                     if (timerState.isPaused) viewModel.resumeTimer() else viewModel.pauseTimer()
                 },
                 onSkip = { viewModel.skipInterval() },
-                onPrevious = { viewModel.previousInterval() },
-                onFinish = onFinish
+                onPrevious = { viewModel.previousInterval() }
             )
+        }
+    }
+}
+
+@Composable
+private fun CompletionScreen(
+    templateName: String,
+    onRepeat: () -> Unit,
+    onHome: () -> Unit
+) {
+    val accent = Color(0xFFA6C4B1)
+    val transition = rememberInfiniteTransition(label = "completion_pulse")
+    val ringScale by transition.animateFloat(
+        initialValue = 0.92f,
+        targetValue = 1.08f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1_400, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "completion_ring_scale"
+    )
+    val ringAlpha by transition.animateFloat(
+        initialValue = 0.22f,
+        targetValue = 0.06f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1_400, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "completion_ring_alpha"
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(Color(0xFF21312B), Color(0xFF0B0B0B)),
+                    radius = 1_000f
+                )
+            )
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .padding(horizontal = 28.dp, vertical = 24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Box(
+                modifier = Modifier.size(190.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = ringScale
+                            scaleY = ringScale
+                            alpha = ringAlpha
+                        }
+                        .background(accent, CircleShape)
+                )
+                Box(
+                    modifier = Modifier
+                        .size(142.dp)
+                        .background(accent.copy(alpha = 0.16f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "✓",
+                        color = accent,
+                        fontSize = 76.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(28.dp))
+            Text(
+                text = "Поздравляем!",
+                color = Color.White,
+                style = MaterialTheme.typography.headlineLarge,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = templateName,
+                color = accent,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                text = "Тренировка окончена",
+                color = Color.White.copy(alpha = 0.78f),
+                style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Center
+            )
+            Spacer(Modifier.height(36.dp))
+
+            Button(
+                onClick = onRepeat,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(58.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = accent,
+                    contentColor = Color(0xFF0B0B0B)
+                )
+            ) {
+                Text("Повторить", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(12.dp))
+            OutlinedButton(
+                onClick = onHome,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(58.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+            ) {
+                Text("На главный экран", fontSize = 16.sp)
+            }
         }
     }
 }
@@ -320,13 +454,11 @@ private fun PhaseFullScreen(
     timeRemaining: Int,
     totalIntervals: Int,
     isPaused: Boolean,
-    isFinished: Boolean,
     animatedBackgrounds: Boolean,
     onClose: () -> Unit,
     onPauseToggle: () -> Unit,
     onSkip: () -> Unit,
-    onPrevious: () -> Unit,
-    onFinish: () -> Unit
+    onPrevious: () -> Unit
 ) {
     val phaseColor = parseColor(phase.colorHex)
 
@@ -404,69 +536,55 @@ private fun PhaseFullScreen(
                 )
             }
 
-            if (isFinished) {
-                Button(
-                    onClick = onFinish,
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = onPrevious,
+                    enabled = canGoPrevious,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(64.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White.copy(alpha = 0.3f)
+                        .size(64.dp)
+                        .background(
+                            Color.White.copy(alpha = if (canGoPrevious) 0.2f else 0.08f),
+                            CircleShape
+                        )
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Предыдущий интервал",
+                        tint = Color.White.copy(alpha = if (canGoPrevious) 1f else 0.35f),
+                        modifier = Modifier.size(32.dp)
                     )
-                ) {
-                    Text("ГОТОВО", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                 }
-            } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
+
+                IconButton(
+                    onClick = onPauseToggle,
+                    modifier = Modifier
+                        .size(80.dp)
+                        .background(Color.White.copy(alpha = 0.3f), CircleShape)
                 ) {
-                    IconButton(
-                        onClick = onPrevious,
-                        enabled = canGoPrevious,
-                        modifier = Modifier
-                            .size(64.dp)
-                            .background(
-                                Color.White.copy(alpha = if (canGoPrevious) 0.2f else 0.08f),
-                                CircleShape
-                            )
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Предыдущий интервал",
-                            tint = Color.White.copy(alpha = if (canGoPrevious) 1f else 0.35f),
-                            modifier = Modifier.size(32.dp)
-                        )
-                    }
+                    Icon(
+                        imageVector = if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                        contentDescription = if (isPaused) "Продолжить" else "Пауза",
+                        tint = Color.White,
+                        modifier = Modifier.size(40.dp)
+                    )
+                }
 
-                    IconButton(
-                        onClick = onPauseToggle,
-                        modifier = Modifier
-                            .size(80.dp)
-                            .background(Color.White.copy(alpha = 0.3f), CircleShape)
-                    ) {
-                        Icon(
-                            imageVector = if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                            contentDescription = if (isPaused) "Продолжить" else "Пауза",
-                            tint = Color.White,
-                            modifier = Modifier.size(40.dp)
-                        )
-                    }
-
-                    IconButton(
-                        onClick = onSkip,
-                        modifier = Modifier
-                            .size(64.dp)
-                            .background(Color.White.copy(alpha = 0.2f), CircleShape)
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            contentDescription = "Пропустить",
-                            tint = Color.White,
-                            modifier = Modifier.size(32.dp)
-                        )
-                    }
+                IconButton(
+                    onClick = onSkip,
+                    modifier = Modifier
+                        .size(64.dp)
+                        .background(Color.White.copy(alpha = 0.2f), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = "Пропустить",
+                        tint = Color.White,
+                        modifier = Modifier.size(32.dp)
+                    )
                 }
             }
 

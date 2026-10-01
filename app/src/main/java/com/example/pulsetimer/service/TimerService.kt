@@ -227,6 +227,12 @@ class TimerService : Service() {
         if (activeTemplateId != null) finalizeAbandonedSession()
         timerJob?.cancel()
         startJob?.cancel()
+        updateState(
+            ServiceTimerState(
+                templateId = templateId,
+                templateName = templateName
+            )
+        )
         cancelVolumeAnimator()
         pendingSpeech = null
         pendingSpeechIndex = -1
@@ -517,6 +523,7 @@ class TimerService : Service() {
                         isRunning = false,
                         isPaused = false,
                         isFinished = completed,
+                        templateId = templateId ?: 0L,
                         templateName = workoutName,
                         totalIntervals = intervalCount,
                         currentIntervalName = if (completed) "Готово!" else "Тренировка остановлена",
