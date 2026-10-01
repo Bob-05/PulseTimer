@@ -35,6 +35,7 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
         .combine(templates) { id, list -> list.find { it.id == id } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val selectedTemplateIntervals: StateFlow<List<IntervalEntity>> = selectedTemplateId
         .flatMapLatest { id ->
             if (id != null) dao.getIntervalsByTemplateId(id) else flowOf(emptyList())
