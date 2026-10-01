@@ -119,6 +119,28 @@ fun SettingsScreen(
         }
     }
 
+    val signalPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+                AppSettingsStore.update {
+                    it.copy(customSignalUri = uri.toString(), toneType = "CUSTOM")
+                }
+            } catch (error: SecurityException) {
+                Toast.makeText(
+                    context,
+                    "Не удалось сохранить доступ к аудиофайлу",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
     var localVolume by remember(settings.soundVolume) {
         mutableFloatStateOf(settings.soundVolume)
     }
@@ -142,6 +164,14 @@ fun SettingsScreen(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            item {
+                SectionTitle("Настройки приложения")
+                Text(
+                    "Общие параметры приложения",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             item { SectionTitle("Уведомления") }
             item {
                 Card(
@@ -215,6 +245,58 @@ fun SettingsScreen(
                 }
             }
 
+            item { SectionTitle("Интерфейс и тема") }
+            item {
+                ChoiceCard(
+                    title = "Тема приложения",
+                    choices = listOf(
+                        "LIGHT" to "Светлая",
+                        "OLED" to "OLED",
+                        "GRAY" to "Серая"
+                    ),
+                    selected = settings.theme,
+                    onSelected = { value ->
+                        AppSettingsStore.update { it.copy(theme = value) }
+                    }
+                )
+            }
+            item {
+                SettingSwitch(
+                    title = "Анимированные фоны",
+                    subtitle = "Отключите для экономии батареи",
+                    checked = settings.animatedBackgrounds,
+                    onCheckedChange = { value ->
+                        AppSettingsStore.update { it.copy(animatedBackgrounds = value) }
+                    }
+                )
+            }
+            item {
+                ChoiceCard(
+                    title = "Анимация смены интервалов",
+                    choices = listOf(
+                        "SLIDE" to "Слайд",
+                        "FADE" to "Затухание",
+                        "ZOOM" to "Масштаб",
+                        "GLIDE" to "Скольжение",
+                        "BOUNCE" to "Отскок",
+                        "DEPTH" to "Глубина",
+                        "SPRING_UP" to "Пружинный подъём"
+                    ),
+                    selected = settings.intervalAnimation,
+                    onSelected = { value ->
+                        AppSettingsStore.update { it.copy(intervalAnimation = value) }
+                    }
+                )
+            }
+
+            item {
+                SectionTitle("Настройки тренировок")
+                Text(
+                    "Звук, голос и отклик во время занятий",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             item { SectionTitle("Звук и голос") }
             item {
                 SettingSwitch(
@@ -259,7 +341,11 @@ fun SettingsScreen(
                         "DOUBLE" to "Двойной импульс",
                         "DIGITAL" to "Цифровой сигнал",
                         "CHIME" to "Колокольчик"
-                    ),
+                    ) + if (settings.customSignalUri != null) {
+                        listOf("CUSTOM" to "Свой сигнал")
+                    } else {
+                        emptyList()
+                    },
                     selected = settings.toneType,
                     onSelected = { value ->
                         AppSettingsStore.update { it.copy(toneType = value) }
@@ -267,13 +353,49 @@ fun SettingsScreen(
                 )
             }
             item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        if (settings.customSignalUri == null) {
+                            "Можно выбрать собственный аудиофайл для сигнала интервала."
+                        } else {
+                            "Свой аудиосигнал добавлен."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(onClick = { signalPicker.launch(arrayOf("audio/*")) }) {
+                            Text(if (settings.customSignalUri == null) "Добавить свой сигнал" else "Заменить сигнал")
+                        }
+                        if (settings.customSignalUri != null) {
+                            Button(onClick = {
+                                AppSettingsStore.update {
+                                    it.copy(
+                                        customSignalUri = null,
+                                        toneType = if (it.toneType == "CUSTOM") "CLASSIC" else it.toneType
+                                    )
+                                }
+                            }) {
+                                Icon(Icons.Default.Delete, contentDescription = null)
+                                Text("Удалить")
+                            }
+                        }
+                    }
+                }
+            }
+            item {
                 Column(modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 8.dp)) {
                     Text(
                         text = if (settings.musicUri == null)
-                            "Фоновая музыка не выбрана"
-                        else "Фоновая музыка выбрана",
+                            "Музыка тренировки по умолчанию не выбрана"
+                        else "Музыка тренировки по умолчанию выбрана",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -313,50 +435,6 @@ fun SettingsScreen(
                     selected = settings.vibrationProfile,
                     onSelected = { value ->
                         AppSettingsStore.update { it.copy(vibrationProfile = value) }
-                    }
-                )
-            }
-
-            item { SectionTitle("Интерфейс и тема") }
-            item {
-                ChoiceCard(
-                    title = "Тема приложения",
-                    choices = listOf(
-                        "LIGHT" to "Светлая",
-                        "OLED" to "OLED",
-                        "GRAY" to "Серая"
-                    ),
-                    selected = settings.theme,
-                    onSelected = { value ->
-                        AppSettingsStore.update { it.copy(theme = value) }
-                    }
-                )
-            }
-            item {
-                SettingSwitch(
-                    title = "Анимированные фоны",
-                    subtitle = "Отключите для экономии батареи",
-                    checked = settings.animatedBackgrounds,
-                    onCheckedChange = { value ->
-                        AppSettingsStore.update { it.copy(animatedBackgrounds = value) }
-                    }
-                )
-            }
-            item {
-                ChoiceCard(
-                    title = "Анимация смены интервалов",
-                    choices = listOf(
-                        "SLIDE" to "Слайд",
-                        "FADE" to "Затухание",
-                        "ZOOM" to "Масштаб",
-                        "GLIDE" to "Скольжение",
-                        "BOUNCE" to "Отскок",
-                        "DEPTH" to "Глубина",
-                        "SPRING_UP" to "Пружинный подъём"
-                    ),
-                    selected = settings.intervalAnimation,
-                    onSelected = { value ->
-                        AppSettingsStore.update { it.copy(intervalAnimation = value) }
                     }
                 )
             }

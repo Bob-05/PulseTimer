@@ -12,6 +12,7 @@ data class AppSettings(
     val voiceEnabled: Boolean = true,
     val soundVolume: Float = 0.8f,
     val toneType: String = "CLASSIC",
+    val customSignalUri: String? = null,
     val vibrationEnabled: Boolean = true,
     val vibrationProfile: String = "SPORT",
     val theme: String = "OLED",
@@ -68,6 +69,7 @@ object AppSettingsStore {
                 putBoolean("voiceEnabled", updated.voiceEnabled)
                 putFloat("soundVolume", updated.soundVolume.coerceIn(0f, 1f))
                 putString("toneType", updated.toneType)
+                putString("customSignalUri", updated.customSignalUri)
                 putBoolean("vibrationEnabled", updated.vibrationEnabled)
                 putString("vibrationProfile", updated.vibrationProfile)
                 putString("theme", updated.theme)
@@ -86,6 +88,7 @@ object AppSettingsStore {
         voiceEnabled = prefs.getBoolean("voiceEnabled", true),
         soundVolume = prefs.getFloat("soundVolume", 0.8f),
         toneType = prefs.getString("toneType", "CLASSIC") ?: "CLASSIC",
+        customSignalUri = prefs.getString("customSignalUri", null),
         vibrationEnabled = prefs.getBoolean("vibrationEnabled", true),
         vibrationProfile = prefs.getString("vibrationProfile", "SPORT") ?: "SPORT",
         theme = prefs.getString("theme", "OLED") ?: "OLED",

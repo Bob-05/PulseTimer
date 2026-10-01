@@ -14,6 +14,7 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
 import android.media.MediaPlayer
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -35,6 +36,7 @@ import com.pulsetimer.data.entity.IntervalEntity
 import com.pulsetimer.data.entity.SessionLogEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -48,6 +50,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.PI
 import kotlin.math.exp
 import kotlin.math.sin
@@ -78,10 +81,12 @@ class TimerService : Service() {
     private var requestedAudioUri: String? = null
     private var volumeAnimator: ValueAnimator? = null
     private var toneTrack: AudioTrack? = null
+    private var customSignalPlayer: MediaPlayer? = null
     private var toneGeneration: Long = 0L
 
     private var textToSpeech: TextToSpeech? = null
     private var textToSpeechReady = false
+    private val textToSpeechInitialization = CompletableDeferred<Boolean>()
     private var pendingSpeech: String? = null
     private var pendingSpeechIndex: Int = -1
     private var completionSpeechGeneration = 0L
@@ -106,6 +111,7 @@ class TimerService : Service() {
 
     companion object {
         private const val TAG = "TimerService"
+        private const val TTS_STARTUP_WAIT_MILLIS = 2_000L
         const val CHANNEL_ID = "pulse_timer_channel"
         const val NOTIFICATION_ID = 1
 
@@ -153,8 +159,8 @@ class TimerService : Service() {
         wakeLock?.setReferenceCounted(false)
         AppSettingsStore.initialize(this)
         textToSpeech = TextToSpeech(this) { status ->
-            textToSpeechReady = status == TextToSpeech.SUCCESS
-            if (textToSpeechReady) {
+            val initialized = status == TextToSpeech.SUCCESS
+            if (initialized) {
                 textToSpeech?.language = Locale.getDefault()
                 textToSpeech?.setAudioAttributes(
                     AudioAttributes.Builder()
@@ -179,6 +185,7 @@ class TimerService : Service() {
                         }
                     }
                 )
+                textToSpeechReady = true
                 if (completionSpeechPending) {
                     speakWorkoutCompletion()
                 } else {
@@ -200,6 +207,7 @@ class TimerService : Service() {
                     }
                 }
             } else {
+                textToSpeechReady = false
                 Log.e(TAG, "TextToSpeech initialization failed: $status")
                 if (completionSpeechPending) {
                     completionSpeechPending = false
@@ -207,6 +215,7 @@ class TimerService : Service() {
                     finishWorkoutIfReady()
                 }
             }
+            textToSpeechInitialization.complete(initialized)
         }
     }
 
@@ -318,6 +327,15 @@ class TimerService : Service() {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 return@launch
+            }
+
+            if (AppSettingsStore.settings.value.voiceEnabled && !textToSpeechReady) {
+                val initialized = withTimeoutOrNull(TTS_STARTUP_WAIT_MILLIS) {
+                    textToSpeechInitialization.await()
+                }
+                if (initialized != true) {
+                    Log.w(TAG, "TextToSpeech was not ready before workout start")
+                }
             }
 
             templateAudioUri = template.audioUri
@@ -765,6 +783,22 @@ class TimerService : Service() {
         if (toneTrack === track) toneTrack = null
     }
 
+    private fun releaseCustomSignalPlayer() {
+        val player = customSignalPlayer
+        customSignalPlayer = null
+        if (player == null) return
+        releaseMediaPlayer(player)
+    }
+
+    private fun releaseMediaPlayer(player: MediaPlayer) {
+        player.setOnPreparedListener(null)
+        player.setOnCompletionListener(null)
+        player.setOnErrorListener(null)
+        try { if (player.isPlaying) player.stop() } catch (_: IllegalStateException) { }
+        try { player.reset() } catch (_: IllegalStateException) { }
+        try { player.release() } catch (_: IllegalStateException) { }
+    }
+
     private fun releasePlayerSafely() {
         cancelVolumeAnimator()
         val p = mediaPlayer
@@ -863,6 +897,11 @@ class TimerService : Service() {
         }
         val generation = ++toneGeneration
         toneTrack?.let(::releaseToneTrack)
+        releaseCustomSignalPlayer()
+        if (settings.toneType == "CUSTOM") {
+            playCustomSignal(settings.customSignalUri, settings.soundVolume, generation)
+            return
+        }
 
         serviceScope.launch(Dispatchers.Default) {
             val samples = createToneSamples(settings.toneType, durationMillis, settings.soundVolume)
@@ -959,6 +998,87 @@ class TimerService : Service() {
         }
     }
 
+    private fun playCustomSignal(signalUri: String?, volume: Float, generation: Long) {
+        if (signalUri == null) {
+            Log.e(TAG, "Custom signal is selected but no audio URI is configured")
+            return
+        }
+
+        val player = MediaPlayer()
+        customSignalPlayer = player
+        try {
+            player.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+            )
+            player.setDataSource(this, Uri.parse(signalUri))
+            player.setVolume(volume, volume)
+            player.setOnPreparedListener { preparedPlayer ->
+                if (generation != toneGeneration ||
+                    !AppSettingsStore.settings.value.soundEnabled ||
+                    customSignalPlayer !== preparedPlayer
+                ) {
+                    if (customSignalPlayer === preparedPlayer) {
+                        releaseCustomSignalPlayer()
+                    } else {
+                        releaseMediaPlayer(preparedPlayer)
+                    }
+                    return@setOnPreparedListener
+                }
+                try {
+                    preparedPlayer.start()
+                    val music = mediaPlayer
+                    if (music.safeIsPlaying) {
+                        cancelVolumeAnimator()
+                        volumeAnimator = ValueAnimator.ofFloat(1f, 0.5f).apply {
+                            duration = 140
+                            addUpdateListener { animator ->
+                                if (mediaPlayer === music) {
+                                    val level = (animator.animatedValue as Float) * volume
+                                    music.safeSetVolume(level)
+                                }
+                            }
+                            start()
+                        }
+                    }
+                } catch (error: IllegalStateException) {
+                    Log.e(TAG, "Unable to play custom signal", error)
+                    releaseCustomSignalPlayer()
+                }
+            }
+            player.setOnCompletionListener { completedPlayer ->
+                if (customSignalPlayer === completedPlayer) {
+                    releaseCustomSignalPlayer()
+                    val music = mediaPlayer
+                    if (music.safeIsPlaying) {
+                        cancelVolumeAnimator()
+                        volumeAnimator = ValueAnimator.ofFloat(0.5f, 1f).apply {
+                            duration = 250
+                            addUpdateListener { animator ->
+                                if (mediaPlayer === music) {
+                                    val level = (animator.animatedValue as Float) * volume
+                                    music.safeSetVolume(level)
+                                }
+                            }
+                            start()
+                        }
+                    }
+                }
+            }
+            player.setOnErrorListener { _, what, extra ->
+                Log.e(TAG, "Custom signal playback error ($what, $extra)")
+                if (customSignalPlayer === player) releaseCustomSignalPlayer()
+                true
+            }
+            player.prepareAsync()
+        } catch (error: Exception) {
+            Log.e(TAG, "Unable to prepare custom signal: $signalUri", error)
+            releaseCustomSignalPlayer()
+        }
+    }
+
     private fun createToneSamples(type: String, durationMillis: Int, volume: Float): ShortArray {
         val sampleRate = 44_100
         val sampleCount = sampleRate * durationMillis / 1_000
@@ -1015,6 +1135,7 @@ class TimerService : Service() {
     private fun cancelTonePlayback() {
         toneGeneration++
         toneTrack?.let(::releaseToneTrack)
+        releaseCustomSignalPlayer()
     }
 
     private fun speakInterval(name: String) {
@@ -1084,6 +1205,7 @@ class TimerService : Service() {
             requestedAudioUri = null
             releasePlayerSafely()
             toneTrack?.let(::releaseToneTrack)
+            releaseCustomSignalPlayer()
             if (!keepTextToSpeech) {
                 runCatching {
                     textToSpeech?.stop()
