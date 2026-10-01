@@ -9,9 +9,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -19,8 +22,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -58,6 +63,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         AppSettingsStore.initialize(this)
         setContent {
+            // Флаг «главный экран уже показывался» — saveable, чтобы
+            // при повороте экрана анимация не проигрывалась заново.
+            var showAppContent by rememberSaveable { mutableStateOf(false) }
             var showLaunchAnimation by remember {
                 mutableStateOf(!launchAnimationShown)
             }
@@ -69,6 +77,39 @@ class MainActivity : ComponentActivity() {
                 }
                 return@setContent
             }
+
+            // Запускается ровно один раз — на первом кадре главного дерева.
+            LaunchedEffect(Unit) {
+                showAppContent = true
+            }
+
+            // Alpha: 0 → 1 за 800 мс.
+            val contentAlpha by animateFloatAsState(
+                targetValue = if (showAppContent) 1f else 0f,
+                animationSpec = tween(
+                    durationMillis = 800,
+                    easing = FastOutSlowInEasing
+                ),
+                label = "app_content_alpha"
+            )
+            // Лёгкое «разворачивание»: 0.94 → 1.0 за 900 мс.
+            val contentScale by animateFloatAsState(
+                targetValue = if (showAppContent) 1f else 0.94f,
+                animationSpec = tween(
+                    durationMillis = 900,
+                    easing = FastOutSlowInEasing
+                ),
+                label = "app_content_scale"
+            )
+            // Микро-подъём снизу: 18dp → 0.
+            val contentOffsetY by animateFloatAsState(
+                targetValue = if (showAppContent) 0f else 18f,
+                animationSpec = tween(
+                    durationMillis = 900,
+                    easing = FastOutSlowInEasing
+                ),
+                label = "app_content_offset_y"
+            )
 
             val settings by AppSettingsStore.settings.collectAsStateWithLifecycle()
 
@@ -85,163 +126,174 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    val navController = rememberNavController()
-
-                    // startDestination фиксируем на момент первой композиции.
-                    // Если брать текущее значение settings на каждой рекомпозиции,
-                    // Navigation Compose пересоздаст граф при смене флага согласия
-                    // и сбросит стек — это не то поведение, которое нам нужно.
-                    val startDestination = remember {
-                        val initial = AppSettingsStore.settings.value
-                        when {
-                            !initial.legalConsentAccepted -> Screen.LegalConsent.route
-                            !initial.onboardingCompleted -> Screen.Onboarding.route
-                            else -> Screen.Main.route
-                        }
-                    }
-
-                    NavHost(
-                        navController = navController,
-                        startDestination = startDestination
+                    // Анимируем ТОЛЬКО контент — фон Surface остаётся
+                    // непрозрачным, поэтому нет вспышек window background.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                alpha = contentAlpha
+                                scaleX = contentScale
+                                scaleY = contentScale
+                                translationY = contentOffsetY
+                            }
                     ) {
-                        composable(Screen.LegalConsent.route) {
-                            LegalConsentScreen(
-                                onAccept = {
-                                    AppSettingsStore.update {
-                                        it.copy(legalConsentAccepted = true)
-                                    }
-                                    val next =
-                                        if (AppSettingsStore.settings.value.onboardingCompleted) {
-                                            Screen.Main.route
-                                        } else {
-                                            Screen.Onboarding.route
-                                        }
-                                    navController.navigate(next) {
-                                        popUpTo(Screen.LegalConsent.route) { inclusive = true }
-                                    }
-                                },
-                                onDecline = { finish() },
-                                onOpenPrivacy = {
-                                    navController.navigate(
-                                        Screen.LegalDocument.routeFor(
-                                            Screen.LegalDocument.TYPE_PRIVACY
-                                        )
-                                    )
-                                },
-                                onOpenTerms = {
-                                    navController.navigate(
-                                        Screen.LegalDocument.routeFor(
-                                            Screen.LegalDocument.TYPE_TERMS
-                                        )
-                                    )
-                                }
-                            )
+                        val navController = rememberNavController()
+
+                        // startDestination фиксируем на момент первой композиции.
+                        // Если брать текущее значение settings на каждой рекомпозиции,
+                        // Navigation Compose пересоздаст граф при смене флага согласия
+                        // и сбросит стек — это не то поведение, которое нам нужно.
+                        val startDestination = remember {
+                            val initial = AppSettingsStore.settings.value
+                            when {
+                                !initial.legalConsentAccepted -> Screen.LegalConsent.route
+                                !initial.onboardingCompleted -> Screen.Onboarding.route
+                                else -> Screen.Main.route
+                            }
                         }
 
-                        composable(Screen.Onboarding.route) {
-                            OnboardingScreen(
-                                onComplete = {
-                                    finishOnboarding(navController) {
+                        NavHost(
+                            navController = navController,
+                            startDestination = startDestination
+                        ) {
+                            composable(Screen.LegalConsent.route) {
+                                LegalConsentScreen(
+                                    onAccept = {
                                         AppSettingsStore.update {
-                                            it.copy(onboardingCompleted = true)
+                                            it.copy(legalConsentAccepted = true)
+                                        }
+                                        val next =
+                                            if (AppSettingsStore.settings.value.onboardingCompleted) {
+                                                Screen.Main.route
+                                            } else {
+                                                Screen.Onboarding.route
+                                            }
+                                        navController.navigate(next) {
+                                            popUpTo(Screen.LegalConsent.route) { inclusive = true }
+                                        }
+                                    },
+                                    onDecline = { finish() },
+                                    onOpenPrivacy = {
+                                        navController.navigate(
+                                            Screen.LegalDocument.routeFor(
+                                                Screen.LegalDocument.TYPE_PRIVACY
+                                            )
+                                        )
+                                    },
+                                    onOpenTerms = {
+                                        navController.navigate(
+                                            Screen.LegalDocument.routeFor(
+                                                Screen.LegalDocument.TYPE_TERMS
+                                            )
+                                        )
+                                    }
+                                )
+                            }
+
+                            composable(Screen.Onboarding.route) {
+                                OnboardingScreen(
+                                    onComplete = {
+                                        finishOnboarding(navController) {
+                                            AppSettingsStore.update {
+                                                it.copy(onboardingCompleted = true)
+                                            }
+                                        }
+                                    },
+                                    onSkip = {
+                                        finishOnboarding(navController) {
+                                            AppSettingsStore.update {
+                                                it.copy(onboardingCompleted = true)
+                                            }
                                         }
                                     }
-                                },
-                                onSkip = {
-                                    finishOnboarding(navController) {
-                                        AppSettingsStore.update {
-                                            it.copy(onboardingCompleted = true)
+                                )
+                            }
+
+                            composable(Screen.Main.route) {
+                                MainScreen(
+                                    onStartClick = { templateId, templateName ->
+                                        navController.navigate(
+                                            "${Screen.Execution.route}/$templateId/${Uri.encode(templateName)}"
+                                        )
+                                    },
+                                    onEditClick = { templateId ->
+                                        navController.navigate("${Screen.Editor.route}/$templateId")
+                                    },
+                                    onSettingsClick = {
+                                        navController.navigate(Screen.Settings.route)
+                                    }
+                                )
+                            }
+
+                            composable(
+                                route = "${Screen.Execution.route}/{templateId}/{templateName}",
+                                enterTransition = { fadeIn(tween(180)) },
+                                exitTransition = { fadeOut(tween(150)) },
+                                popEnterTransition = { fadeIn(tween(180)) },
+                                popExitTransition = { fadeOut(tween(150)) }
+                            ) { backStackEntry ->
+                                val templateId = backStackEntry.arguments
+                                    ?.getString("templateId")?.toLongOrNull() ?: 0L
+                                val templateName = Uri.decode(
+                                    backStackEntry.arguments?.getString("templateName") ?: ""
+                                )
+                                ExecutionScreen(
+                                    templateId = templateId,
+                                    templateName = templateName,
+                                    onFinish = {
+                                        navController.navigate(Screen.Main.route) {
+                                            popUpTo(Screen.Main.route) { inclusive = true }
                                         }
                                     }
-                                }
-                            )
-                        }
+                                )
+                            }
 
-                        composable(Screen.Main.route) {
-                            MainScreen(
-                                onStartClick = { templateId, templateName ->
-                                    navController.navigate(
-                                        "${Screen.Execution.route}/$templateId/${Uri.encode(templateName)}"
-                                    )
-                                },
-                                onEditClick = { templateId ->
-                                    navController.navigate("${Screen.Editor.route}/$templateId")
-                                },
-                                onSettingsClick = {
-                                    navController.navigate(Screen.Settings.route)
-                                }
-                            )
-                        }
+                            composable(
+                                route = "${Screen.Editor.route}/{templateId}"
+                            ) { backStackEntry ->
+                                val templateId = backStackEntry.arguments
+                                    ?.getString("templateId")?.toLongOrNull() ?: 0L
+                                EditorScreen(
+                                    templateId = templateId,
+                                    onBack = { navController.popBackStack() }
+                                )
+                            }
 
-                        composable(
-                            route = "${Screen.Execution.route}/{templateId}/{templateName}",
-                            // Короткий transition — дефолтный fade 700 мс даёт фризы,
-                            // т.к. оба экрана рендерятся одновременно.
-                            enterTransition = { fadeIn(tween(180)) },
-                            exitTransition = { fadeOut(tween(150)) },
-                            popEnterTransition = { fadeIn(tween(180)) },
-                            popExitTransition = { fadeOut(tween(150)) }
-                        ) { backStackEntry ->
-                            val templateId = backStackEntry.arguments
-                                ?.getString("templateId")?.toLongOrNull() ?: 0L
-                            val templateName = Uri.decode(
-                                backStackEntry.arguments?.getString("templateName") ?: ""
-                            )
-                            ExecutionScreen(
-                                templateId = templateId,
-                                templateName = templateName,
-                                onFinish = {
-                                    navController.navigate(Screen.Main.route) {
-                                        popUpTo(Screen.Main.route) { inclusive = true }
+                            composable(Screen.Settings.route) {
+                                SettingsScreen(
+                                    onBack = { navController.popBackStack() },
+                                    onShowOnboarding = {
+                                        navController.navigate(Screen.Onboarding.route)
+                                    },
+                                    onOpenPrivacy = {
+                                        navController.navigate(
+                                            Screen.LegalDocument.routeFor(
+                                                Screen.LegalDocument.TYPE_PRIVACY
+                                            )
+                                        )
+                                    },
+                                    onOpenTerms = {
+                                        navController.navigate(
+                                            Screen.LegalDocument.routeFor(
+                                                Screen.LegalDocument.TYPE_TERMS
+                                            )
+                                        )
                                     }
-                                }
-                            )
-                        }
+                                )
+                            }
 
-                        composable(
-                            route = "${Screen.Editor.route}/{templateId}"
-                        ) { backStackEntry ->
-                            val templateId = backStackEntry.arguments
-                                ?.getString("templateId")?.toLongOrNull() ?: 0L
-                            EditorScreen(
-                                templateId = templateId,
-                                onBack = { navController.popBackStack() }
-                            )
-                        }
-
-                        composable(Screen.Settings.route) {
-                            SettingsScreen(
-                                onBack = { navController.popBackStack() },
-                                onShowOnboarding = {
-                                    navController.navigate(Screen.Onboarding.route)
-                                },
-                                onOpenPrivacy = {
-                                    navController.navigate(
-                                        Screen.LegalDocument.routeFor(
-                                            Screen.LegalDocument.TYPE_PRIVACY
-                                        )
-                                    )
-                                },
-                                onOpenTerms = {
-                                    navController.navigate(
-                                        Screen.LegalDocument.routeFor(
-                                            Screen.LegalDocument.TYPE_TERMS
-                                        )
-                                    )
-                                }
-                            )
-                        }
-
-                        composable(
-                            route = "${Screen.LegalDocument.route}/{${Screen.LegalDocument.ARG_TYPE}}"
-                        ) { backStackEntry ->
-                            val type = backStackEntry.arguments
-                                ?.getString(Screen.LegalDocument.ARG_TYPE)
-                                ?: Screen.LegalDocument.TYPE_PRIVACY
-                            LegalDocumentScreen(
-                                type = type,
-                                onBack = { navController.popBackStack() }
-                            )
+                            composable(
+                                route = "${Screen.LegalDocument.route}/{${Screen.LegalDocument.ARG_TYPE}}"
+                            ) { backStackEntry ->
+                                val type = backStackEntry.arguments
+                                    ?.getString(Screen.LegalDocument.ARG_TYPE)
+                                    ?: Screen.LegalDocument.TYPE_PRIVACY
+                                LegalDocumentScreen(
+                                    type = type,
+                                    onBack = { navController.popBackStack() }
+                                )
+                            }
                         }
                     }
                 }
