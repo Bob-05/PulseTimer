@@ -24,6 +24,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.net.toUri
@@ -83,6 +84,11 @@ class TimerService : Service() {
     private var textToSpeechReady = false
     private var pendingSpeech: String? = null
     private var pendingSpeechIndex: Int = -1
+    private var completionSpeechGeneration = 0L
+    private var completionUtteranceId: String? = null
+    private var completionSpeechPending = false
+    private var completionSpeechFinished = true
+    private var completionPersistenceFinished = false
     private var audioFocusRequest: AudioFocusRequest? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -156,19 +162,50 @@ class TimerService : Service() {
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                         .build()
                 )
-                pendingSpeech?.let { speech ->
-                    if (AppSettingsStore.settings.value.voiceEnabled &&
-                        activeTemplateId != null &&
-                        !isPaused &&
-                        pendingSpeechIndex == currentIndex
-                    ) {
-                        textToSpeech?.speak(speech, TextToSpeech.QUEUE_FLUSH, null, "interval-$currentIndex")
+                textToSpeech?.setOnUtteranceProgressListener(
+                    object : UtteranceProgressListener() {
+                        override fun onStart(utteranceId: String?) = Unit
+
+                        override fun onDone(utteranceId: String?) {
+                            utteranceId?.let { id ->
+                                mainHandler.post { onCompletionSpeechFinished(id) }
+                            }
+                        }
+
+                        override fun onError(utteranceId: String?) {
+                            utteranceId?.let { id ->
+                                mainHandler.post { onCompletionSpeechFinished(id) }
+                            }
+                        }
                     }
-                    pendingSpeech = null
-                    pendingSpeechIndex = -1
+                )
+                if (completionSpeechPending) {
+                    speakWorkoutCompletion()
+                } else {
+                    pendingSpeech?.let { speech ->
+                        if (AppSettingsStore.settings.value.voiceEnabled &&
+                            activeTemplateId != null &&
+                            !isPaused &&
+                            pendingSpeechIndex == currentIndex
+                        ) {
+                            textToSpeech?.speak(
+                                speech,
+                                TextToSpeech.QUEUE_FLUSH,
+                                null,
+                                "interval-$currentIndex"
+                            )
+                        }
+                        pendingSpeech = null
+                        pendingSpeechIndex = -1
+                    }
                 }
             } else {
                 Log.e(TAG, "TextToSpeech initialization failed: $status")
+                if (completionSpeechPending) {
+                    completionSpeechPending = false
+                    completionSpeechFinished = true
+                    finishWorkoutIfReady()
+                }
             }
         }
     }
@@ -224,6 +261,11 @@ class TimerService : Service() {
     }
 
     private fun startTimer(templateId: Long) {
+        completionSpeechGeneration++
+        completionUtteranceId = null
+        completionSpeechPending = false
+        completionSpeechFinished = true
+        completionPersistenceFinished = false
         if (activeTemplateId != null) finalizeAbandonedSession()
         timerJob?.cancel()
         startJob?.cancel()
@@ -443,7 +485,6 @@ class TimerService : Service() {
                             isPaused = false
                         )
                     )
-                    updateNotification()
                     lastPublishedRemaining = remainingSeconds
                 }
 
@@ -496,9 +537,16 @@ class TimerService : Service() {
         val workoutName = templateName
         val intervalCount = intervals.size
         val remainingSeconds = timeRemaining
+        completionPersistenceFinished = false
+        completionSpeechGeneration++
+        completionUtteranceId = null
+        completionSpeechPending =
+            completed && AppSettingsStore.settings.value.voiceEnabled
+        completionSpeechFinished = !completionSpeechPending
         activeTemplateId = null
         pendingSpeech = null
-        releaseMediaResources()
+        releaseMediaResources(keepTextToSpeech = completionSpeechPending)
+        if (completionSpeechPending) speakWorkoutCompletion()
         val completedAt = System.currentTimeMillis()
         serviceScope.launch(Dispatchers.IO) {
             if (templateId != null) {
@@ -530,8 +578,13 @@ class TimerService : Service() {
                         timeRemainingSeconds = if (completed) 0 else remainingSeconds
                     )
                 )
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                if (completed) {
+                    completionPersistenceFinished = true
+                    finishWorkoutIfReady()
+                } else {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
             }
         }
     }
@@ -575,11 +628,18 @@ class TimerService : Service() {
 
         val currentInterval = intervals.getOrNull(currentIndex)
         val title = if (currentInterval != null) "$templateName — ${currentInterval.name}" else templateName
-        val text = "Осталось: $timeRemaining сек"
+        val text = if (isPaused) {
+            "Пауза · осталось $timeRemaining сек"
+        } else {
+            "Осталось:"
+        }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(text)
+            .setWhen(System.currentTimeMillis() + timeRemaining.coerceAtLeast(0) * 1_000L)
+            .setUsesChronometer(!isPaused)
+            .setChronometerCountDown(!isPaused)
             .setSmallIcon(android.R.drawable.ic_popup_reminder)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -946,7 +1006,38 @@ class TimerService : Service() {
         }
     }
 
-    private fun releaseMediaResources() {
+    private fun speakWorkoutCompletion() {
+        if (!completionSpeechPending || !textToSpeechReady) return
+        val utteranceId = "workout-complete-$completionSpeechGeneration"
+        completionUtteranceId = utteranceId
+        val result = textToSpeech?.speak(
+            "Тренировка завершена",
+            TextToSpeech.QUEUE_FLUSH,
+            null,
+            utteranceId
+        ) ?: TextToSpeech.ERROR
+        if (result == TextToSpeech.ERROR) {
+            Log.e(TAG, "Unable to speak workout completion")
+            onCompletionSpeechFinished(utteranceId)
+        }
+    }
+
+    private fun onCompletionSpeechFinished(utteranceId: String) {
+        if (completionUtteranceId != utteranceId) return
+        completionUtteranceId = null
+        completionSpeechPending = false
+        completionSpeechFinished = true
+        finishWorkoutIfReady()
+    }
+
+    private fun finishWorkoutIfReady() {
+        if (!completionPersistenceFinished || !completionSpeechFinished) return
+        releaseMediaResources()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    private fun releaseMediaResources(keepTextToSpeech: Boolean = false) {
         toneGeneration++
         pendingSpeech = null
         pendingSpeechIndex = -1
@@ -955,12 +1046,14 @@ class TimerService : Service() {
             requestedAudioUri = null
             releasePlayerSafely()
             toneTrack?.let(::releaseToneTrack)
-            runCatching {
-                textToSpeech?.stop()
-                textToSpeech?.shutdown()
+            if (!keepTextToSpeech) {
+                runCatching {
+                    textToSpeech?.stop()
+                    textToSpeech?.shutdown()
+                }
+                textToSpeech = null
+                textToSpeechReady = false
             }
-            textToSpeech = null
-            textToSpeechReady = false
             audioFocusRequest?.let { runCatching { audioManager.abandonAudioFocusRequest(it) } }
             audioFocusRequest = null
         }
