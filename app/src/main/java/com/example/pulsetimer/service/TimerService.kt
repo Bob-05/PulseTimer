@@ -339,7 +339,7 @@ class TimerService : Service() {
             if (activeTemplateId != null) {
                 startForeground(NOTIFICATION_ID, buildNotification())
             }
-            runInterval()
+            runInterval(isWorkoutStart = true)
             startJob = null
         }
     }
@@ -377,7 +377,10 @@ class TimerService : Service() {
         wakeLock?.acquire((remainingSeconds + 60L) * 1_000L)
     }
 
-    private fun runInterval(startPaused: Boolean = false) {
+    private fun runInterval(
+        startPaused: Boolean = false,
+        isWorkoutStart: Boolean = false
+    ) {
         if (currentIndex >= intervals.size) {
             finishWorkout()
             return
@@ -411,7 +414,7 @@ class TimerService : Service() {
         val intervalWithPattern = interval.copy(
             vibrationPatternId = if (interval.vibrationPatternId == 1) templateVibrationPatternId else interval.vibrationPatternId
         )
-        performPhaseFeedback(intervalWithPattern)
+        performPhaseFeedback(intervalWithPattern, playTransitionTone = !isWorkoutStart)
         speakInterval(interval.name)
         startMusic(interval.audioUri ?: templateAudioUri ?: AppSettingsStore.settings.value.musicUri)
         if (startPaused) mainHandler.post { mediaPlayer.safePause() }
@@ -781,14 +784,17 @@ class TimerService : Service() {
         }
     }
 
-    private fun performPhaseFeedback(interval: IntervalEntity) {
+    private fun performPhaseFeedback(
+        interval: IntervalEntity,
+        playTransitionTone: Boolean = true
+    ) {
         val phaseIndex = currentIndex
         val isWork = interval.name.contains("работ", true) ||
                 interval.name.contains("work", true) ||
                 interval.colorHex.equals("#FF3B30", true)
         mainHandler.post {
             if (activeTemplateId == null || currentIndex != phaseIndex) return@post
-            playTone(isTransition = true)
+            if (playTransitionTone) playTone(isTransition = true)
             if (AppSettingsStore.settings.value.vibrationEnabled && interval.vibrationPatternId != 0) {
                 val s = vibrationStrength()
                 val effect: VibrationEffect? = when (interval.vibrationPatternId) {

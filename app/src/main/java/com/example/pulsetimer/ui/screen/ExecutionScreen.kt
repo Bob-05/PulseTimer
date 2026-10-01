@@ -9,6 +9,7 @@ import android.widget.VideoView
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.RepeatMode
@@ -111,6 +112,16 @@ fun ExecutionScreen(
     val isFinished = timerState.isFinished && timerState.templateId == templateId
     val isReady = timerState.templateId == templateId &&
         (timerState.totalIntervals > 0 || isFinished)
+    var initialEntryCompleted by remember(templateId) { mutableStateOf(false) }
+
+    LaunchedEffect(templateId, isReady, isFinished) {
+        if (isFinished) {
+            initialEntryCompleted = false
+        } else if (isReady && !initialEntryCompleted) {
+            delay(650)
+            initialEntryCompleted = true
+        }
+    }
 
     // Defensive: если сервис не поднял состояние за 6 секунд —
     // показываем экран ошибки вместо бесконечного спиннера.
@@ -262,6 +273,7 @@ fun ExecutionScreen(
                 totalIntervals = timerState.totalIntervals,
                 isPaused = timerState.isPaused,
                 animatedBackgrounds = settings.animatedBackgrounds,
+                animateInitialEntry = !initialEntryCompleted && phase.index == 0,
                 onClose = { viewModel.stopTimer(); onFinish() },
                 onPauseToggle = {
                     if (timerState.isPaused) viewModel.resumeTimer() else viewModel.pauseTimer()
@@ -472,12 +484,27 @@ private fun PhaseFullScreen(
     totalIntervals: Int,
     isPaused: Boolean,
     animatedBackgrounds: Boolean,
+    animateInitialEntry: Boolean,
     onClose: () -> Unit,
     onPauseToggle: () -> Unit,
     onSkip: () -> Unit,
     onPrevious: () -> Unit
 ) {
     val phaseColor = parseColor(phase.colorHex)
+    val entryProgress = remember(phase.index) {
+        Animatable(if (animateInitialEntry) 0f else 1f)
+    }
+    LaunchedEffect(entryProgress, animateInitialEntry) {
+        if (animateInitialEntry) {
+            entryProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(
+                    durationMillis = 520,
+                    easing = FastOutSlowInEasing
+                )
+            )
+        }
+    }
 
     // Ширина контейнера в dp. LocalWindowInfo.current.containerSize даёт размер
     // в пикселях — переводим в dp через LocalDensity. Это корректнее, чем
@@ -507,6 +534,13 @@ private fun PhaseFullScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .graphicsLayer {
+                    val progress = entryProgress.value
+                    alpha = progress
+                    scaleX = 0.96f + 0.04f * progress
+                    scaleY = 0.96f + 0.04f * progress
+                    translationY = with(density) { (1f - progress) * 24.dp.toPx() }
+                }
                 .windowInsetsPadding(WindowInsets.safeDrawing)
                 .padding(horizontal = 24.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
