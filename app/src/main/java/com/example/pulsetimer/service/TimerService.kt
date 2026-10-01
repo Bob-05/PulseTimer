@@ -351,35 +351,7 @@ class TimerService : Service() {
         if (startPaused) mainHandler.post { mediaPlayer.safePause() }
         updateNotification()
 
-        timerJob?.cancel()
-        timerJob = serviceScope.launch {
-            while (timeRemaining > 0 && !isPaused) {
-                delay(1000)
-                if (!isPaused) {
-                    timeRemaining--
-                    val entity = intervals.getOrNull(currentIndex)
-                    if (entity != null) {
-                        if (timeRemaining in 1..3) {
-                            playTone(isTransition = false)
-                            vibrateForCountdown(entity.withTemplatePattern())
-                            speakCountdown(timeRemaining)
-                        }
-                        updateState(
-                            state.value.copy(
-                                timeRemainingSeconds = timeRemaining,
-                                isRunning = true,
-                                isPaused = false
-                            )
-                        )
-                        updateNotification()
-                    }
-                }
-            }
-            if (!isPaused) {
-                currentIndex++
-                runInterval()
-            }
-        }
+        startCountdownLoop()
     }
 
     private fun pauseTimer() {
@@ -397,6 +369,10 @@ class TimerService : Service() {
         updateState(state.value.copy(isPaused = false, isRunning = true))
         mainHandler.post { mediaPlayer.safeStart() }
         updateNotification()
+        startCountdownLoop()
+    }
+
+    private fun startCountdownLoop() {
         timerJob?.cancel()
         timerJob = serviceScope.launch {
             while (timeRemaining > 0 && !isPaused) {
@@ -564,6 +540,10 @@ class TimerService : Service() {
     }
 
     private fun requestAudioFocus() {
+        audioFocusRequest?.let { previousRequest ->
+            runCatching { audioManager.abandonAudioFocusRequest(previousRequest) }
+        }
+        audioFocusRequest = null
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -644,6 +624,14 @@ class TimerService : Service() {
     private fun cancelVolumeAnimator() {
         volumeAnimator?.cancel()
         volumeAnimator = null
+    }
+
+    private fun releaseToneTrack(track: AudioTrack) {
+        runCatching {
+            if (track.playState == AudioTrack.PLAYSTATE_PLAYING) track.stop()
+            track.release()
+        }
+        if (toneTrack === track) toneTrack = null
     }
 
     private fun releasePlayerSafely() {
@@ -731,12 +719,7 @@ class TimerService : Service() {
             }
             val samples = createToneSamples(settings.toneType, durationMillis, settings.soundVolume)
 
-            toneTrack?.let { previous ->
-                runCatching {
-                    if (previous.playState == AudioTrack.PLAYSTATE_PLAYING) previous.stop()
-                    previous.release()
-                }
-            }
+            toneTrack?.let(::releaseToneTrack)
 
             val track = try {
                 AudioTrack.Builder()
@@ -765,10 +748,12 @@ class TimerService : Service() {
             val written = try {
                 track.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
             } catch (e: Exception) {
-                track.release(); toneTrack = null; return@post
+                releaseToneTrack(track)
+                return@post
             }
             if (written != samples.size) {
-                track.release(); toneTrack = null; return@post
+                releaseToneTrack(track)
+                return@post
             }
             runCatching { track.play() }
 
@@ -788,11 +773,7 @@ class TimerService : Service() {
 
             mainHandler.postDelayed({
                 if (toneTrack === track) {
-                    runCatching {
-                        if (track.playState == AudioTrack.PLAYSTATE_PLAYING) track.stop()
-                        track.release()
-                    }
-                    toneTrack = null
+                    releaseToneTrack(track)
                 }
                 if (mediaPlayer === player && player.safeIsPlaying) {
                     cancelVolumeAnimator()
@@ -859,13 +840,7 @@ class TimerService : Service() {
         mainHandler.post {
             cancelVolumeAnimator()
             releasePlayerSafely()
-            toneTrack?.let { t ->
-                runCatching {
-                    if (t.playState == AudioTrack.PLAYSTATE_PLAYING) t.stop()
-                    t.release()
-                }
-            }
-            toneTrack = null
+            toneTrack?.let(::releaseToneTrack)
             runCatching {
                 textToSpeech?.stop()
                 textToSpeech?.shutdown()
