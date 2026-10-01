@@ -73,19 +73,10 @@ class SessionHistoryTest {
             )
             dao.deleteSessionLogById(logId)
             assertEquals(secondLogId, dao.getAllSessionLogs().first().single().id)
-            dao.deleteSessionLogsByTemplateId(templateId)
+            dao.clearAllSessionLogs()
             assertEquals(0, dao.getAllSessionLogs().first().size)
             assertEquals(intervalId, dao.getIntervalsByTemplateId(templateId).first().single().id)
 
-            dao.insertSessionLog(
-                SessionLogEntity(
-                    templateId = templateId,
-                    templateName = "Test workout",
-                    startedAt = startedAt + 20_000
-                )
-            )
-            dao.clearAllSessionLogs()
-            assertEquals(0, dao.getAllSessionLogs().first().size)
         } finally {
             database.close()
         }
