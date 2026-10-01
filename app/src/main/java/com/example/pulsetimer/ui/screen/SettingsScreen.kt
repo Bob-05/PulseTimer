@@ -43,7 +43,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -61,6 +60,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.data.entity.SessionLogEntity
@@ -78,9 +78,9 @@ fun SettingsScreen(
     onOpenTerms: () -> Unit
 ) {
     val context = LocalContext.current
-    val settings by AppSettingsStore.settings.collectAsState()
+    val settings by AppSettingsStore.settings.collectAsStateWithLifecycle()
     val viewModel: TimerViewModel = viewModel()
-    val logs by viewModel.sessionLogs.collectAsState()
+    val logs by viewModel.sessionLogs.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var showClearHistoryConfirmation by remember { mutableStateOf(false) }
     var pendingDeleteLog by remember { mutableStateOf<SessionLogEntity?>(null) }

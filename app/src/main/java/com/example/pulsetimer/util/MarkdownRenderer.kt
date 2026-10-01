@@ -18,6 +18,10 @@ object MarkdownRenderer {
 
     private val HEADING = Regex("^(#{1,6})\\s+(.*)$")
     private val HR = Regex("^-{3,}\\s*$")
+    private val INLINE_CODE = Regex("`([^`]+?)`")
+    private val INLINE_BOLD = Regex("\\*\\*(.+?)\\*\\*")
+    private val INLINE_ITALIC = Regex("(?<![*])\\*([^*\\n]+?)\\*(?![*])")
+    private val INLINE_LINK = Regex("\\[([^\\]]+)]\\(([^)]+)\\)")
 
     /**
      * Префикс маркированного списка: "- " или "* " (с любым количеством
@@ -183,20 +187,20 @@ object MarkdownRenderer {
         // 1. Inline code — вынимаем и защищаем плейсхолдерами, чтобы
         //    последующие регексы (bold/italic) не тронули его содержимое.
         val codeSpans = mutableListOf<String>()
-        s = Regex("`([^`]+?)`").replace(s) { m ->
+        s = INLINE_CODE.replace(s) { m ->
             val idx = codeSpans.size
             codeSpans.add("<code>${m.groupValues[1]}</code>")
             "\u0000CODE$idx\u0000"
         }
 
         // 2. Bold **x** — обязательно до italic.
-        s = Regex("\\*\\*(.+?)\\*\\*").replace(s, "<strong>$1</strong>")
+        s = INLINE_BOLD.replace(s, "<strong>$1</strong>")
 
         // 3. Italic *x* — не трогаем уже сконвертированные strong-маркеры.
-        s = Regex("(?<![*])\\*([^*\\n]+?)\\*(?![*])").replace(s, "<em>$1</em>")
+        s = INLINE_ITALIC.replace(s, "<em>$1</em>")
 
         // 4. Links [text](url). Кавычка в URL ломала бы href — экранируем.
-        s = Regex("\\[([^\\]]+)]\\(([^)]+)\\)").replace(s) { m ->
+        s = INLINE_LINK.replace(s) { m ->
             val label = m.groupValues[1]
             val url = m.groupValues[2].replace("\"", "&quot;")
             "<a href=\"$url\">$label</a>"

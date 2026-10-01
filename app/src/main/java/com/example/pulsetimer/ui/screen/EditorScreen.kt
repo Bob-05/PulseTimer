@@ -51,7 +51,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -70,6 +69,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pulsetimer.data.entity.IntervalEntity
 import com.pulsetimer.viewmodel.TimerViewModel
 import kotlinx.coroutines.delay
@@ -82,8 +82,8 @@ fun EditorScreen(
     templateId: Long,
     onBack: () -> Unit
 ) {
-    val selectedTemplate by viewModel.selectedTemplate.collectAsState()
-    val intervals by viewModel.selectedTemplateIntervals.collectAsState()
+    val selectedTemplate by viewModel.selectedTemplate.collectAsStateWithLifecycle()
+    val intervals by viewModel.selectedTemplateIntervals.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var name by remember(templateId) { mutableStateOf("") }

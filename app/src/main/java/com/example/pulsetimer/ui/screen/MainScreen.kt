@@ -52,7 +52,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,6 +68,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pulsetimer.data.entity.TemplateEntity
 import com.pulsetimer.service.TimerService
 import com.pulsetimer.viewmodel.TimerViewModel
@@ -83,8 +83,8 @@ fun MainScreen(
     onEditClick: (Long) -> Unit,
     onSettingsClick: () -> Unit
 ) {
-    val templates by viewModel.templates.collectAsState()
-    val timerState by viewModel.timerState.collectAsState()
+    val templates by viewModel.templates.collectAsStateWithLifecycle()
+    val timerState by viewModel.timerState.collectAsStateWithLifecycle()
     val pagerState = rememberPagerState(pageCount = { templates.size })
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }

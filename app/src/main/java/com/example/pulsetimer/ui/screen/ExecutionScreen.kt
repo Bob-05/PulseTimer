@@ -4,6 +4,7 @@ import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaPlayer
+import android.util.LruCache
 import android.util.Log
 import android.widget.VideoView
 import androidx.compose.animation.AnimatedContent
@@ -62,7 +63,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -92,6 +92,7 @@ import androidx.core.graphics.toColorInt
 import androidx.core.net.toUri
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.viewmodel.TimerViewModel
 import kotlinx.coroutines.Dispatchers
@@ -106,8 +107,8 @@ fun ExecutionScreen(
     templateName: String,
     onFinish: () -> Unit
 ) {
-    val timerState by viewModel.timerState.collectAsState()
-    val settings by AppSettingsStore.settings.collectAsState()
+    val timerState by viewModel.timerState.collectAsStateWithLifecycle()
+    val settings by AppSettingsStore.settings.collectAsStateWithLifecycle()
 
     val isFinished = timerState.isFinished && timerState.templateId == templateId
     val isReady = timerState.templateId == templateId &&
@@ -679,6 +680,9 @@ private fun decodeSampledBitmap(
     uri: String,
     reqSize: Int = 1080
 ): Bitmap? {
+    val cacheKey = "$uri@$reqSize"
+    phaseBitmapCache.get(cacheKey)?.let { return it }
+
     return try {
         val parsedUri = uri.toUri()
         val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -686,18 +690,35 @@ private fun decodeSampledBitmap(
             BitmapFactory.decodeStream(it, null, opts)
         }
         if (opts.outWidth <= 0 || opts.outHeight <= 0) return null
-        var sample = 1
-        while (maxOf(opts.outWidth, opts.outHeight) / sample > reqSize) {
-            sample *= 2
-        }
+        val sample = calculateBitmapSampleSize(opts.outWidth, opts.outHeight, reqSize)
         val opts2 = BitmapFactory.Options().apply { inSampleSize = sample }
-        context.contentResolver.openInputStream(parsedUri)?.use {
+        val bitmap = context.contentResolver.openInputStream(parsedUri)?.use {
             BitmapFactory.decodeStream(it, null, opts2)
         }
+        bitmap?.let { decoded -> phaseBitmapCache.put(cacheKey, decoded) ?: decoded }
     } catch (e: Exception) {
         Log.e("ExecutionScreen", "Unable to decode background", e)
         null
     }
+}
+
+private val phaseBitmapCache = object : LruCache<String, Bitmap>(
+    (Runtime.getRuntime().maxMemory() / 1024L / 8L)
+        .coerceAtMost(Int.MAX_VALUE.toLong())
+        .toInt()
+) {
+    override fun sizeOf(key: String, bitmap: Bitmap): Int =
+        (bitmap.allocationByteCount / 1024).coerceAtLeast(1)
+}
+
+internal fun calculateBitmapSampleSize(width: Int, height: Int, requestedSize: Int): Int {
+    if (width <= 0 || height <= 0 || requestedSize <= 0) return 1
+
+    var sample = 1
+    while (maxOf(width, height) / sample > requestedSize) {
+        sample *= 2
+    }
+    return sample
 }
 
 @Composable
