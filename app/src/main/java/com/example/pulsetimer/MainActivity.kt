@@ -18,9 +18,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -31,6 +34,7 @@ import com.pulsetimer.ui.screen.EditorScreen
 import com.pulsetimer.ui.screen.ExecutionScreen
 import com.pulsetimer.ui.screen.LegalConsentScreen
 import com.pulsetimer.ui.screen.LegalDocumentScreen
+import com.pulsetimer.ui.screen.LaunchAnimationScreen
 import com.pulsetimer.ui.screen.MainScreen
 import com.pulsetimer.ui.screen.OnboardingScreen
 import com.pulsetimer.ui.screen.SettingsScreen
@@ -38,16 +42,34 @@ import com.pulsetimer.ui.theme.PulseTimerTheme
 
 class MainActivity : ComponentActivity() {
 
+    private var launchAnimationShown = false
+
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { /* результат не важен: сервис продолжит работать в любом случае,
          но карточка в шторке появится только при granted = true */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
+        launchAnimationShown = savedInstanceState?.getBoolean(
+            STATE_LAUNCH_ANIMATION_SHOWN
+        ) ?: false
         enableEdgeToEdge()
         AppSettingsStore.initialize(this)
         setContent {
+            var showLaunchAnimation by remember {
+                mutableStateOf(!launchAnimationShown)
+            }
+            if (showLaunchAnimation) {
+                launchAnimationShown = true
+                LaunchAnimationScreen {
+                    launchAnimationShown = true
+                    showLaunchAnimation = false
+                }
+                return@setContent
+            }
+
             val settings by AppSettingsStore.settings.collectAsState()
 
             // Разрешение на уведомления запрашиваем ТОЛЬКО после того,
@@ -227,6 +249,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean(STATE_LAUNCH_ANIMATION_SHOWN, launchAnimationShown)
+        super.onSaveInstanceState(outState)
+    }
+
     /**
      * На Android 13+ (API 33+) для показа уведомлений foreground-сервиса
      * требуется runtime-разрешение POST_NOTIFICATIONS. Запрашиваем его
@@ -243,6 +270,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
+private const val STATE_LAUNCH_ANIMATION_SHOWN = "launch_animation_shown"
 
 /**
  * Завершение онбординга.
