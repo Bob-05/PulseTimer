@@ -76,6 +76,18 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { dao.updateTemplate(template) }
     }
 
+    fun updateTemplateDetails(templateId: Long, name: String, description: String) {
+        viewModelScope.launch {
+            val template = dao.getTemplateById(templateId).first() ?: return@launch
+            dao.updateTemplate(
+                template.copy(
+                    name = name.trim().ifEmpty { template.name },
+                    description = description.trim()
+                )
+            )
+        }
+    }
+
     fun addInterval(templateId: Long, name: String, durationSeconds: Int, colorHex: String) {
         viewModelScope.launch {
             val currentIntervals = dao.getIntervalsByTemplateId(templateId).first()
@@ -85,9 +97,25 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
                     name = name,
                     durationSeconds = durationSeconds,
                     colorHex = colorHex,
-                    orderIndex = currentIntervals.size
+                    orderIndex = (currentIntervals.maxOfOrNull { it.orderIndex } ?: -1) + 1
                 )
             )
+        }
+    }
+
+    fun moveInterval(templateId: Long, intervalId: Long, direction: Int) {
+        if (direction != -1 && direction != 1) return
+        viewModelScope.launch {
+            val intervals = dao.getIntervalsByTemplateId(templateId).first().toMutableList()
+            val currentIndex = intervals.indexOfFirst { it.id == intervalId }
+            val targetIndex = currentIndex + direction
+            if (currentIndex == -1 || targetIndex !in intervals.indices) return@launch
+
+            val movedInterval = intervals.removeAt(currentIndex)
+            intervals.add(targetIndex, movedInterval)
+            dao.reorderIntervals(intervals.mapIndexed { index, interval ->
+                interval.copy(orderIndex = index)
+            })
         }
     }
 

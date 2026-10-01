@@ -5,6 +5,7 @@ import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import com.pulsetimer.data.entity.IntervalEntity
 import com.pulsetimer.data.entity.SessionLogEntity
@@ -32,13 +33,21 @@ interface TimerDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertInterval(interval: IntervalEntity): Long
 
+    @Update
+    suspend fun updateIntervals(intervals: List<IntervalEntity>)
+
+    @Transaction
+    suspend fun reorderIntervals(intervals: List<IntervalEntity>) {
+        updateIntervals(intervals)
+    }
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertIntervals(intervals: List<IntervalEntity>)
 
     @Delete
     suspend fun deleteInterval(interval: IntervalEntity)
 
-    @Query("SELECT * FROM intervals WHERE templateId = :templateId ORDER BY orderIndex ASC")
+    @Query("SELECT * FROM intervals WHERE templateId = :templateId ORDER BY orderIndex ASC, id ASC")
     fun getIntervalsByTemplateId(templateId: Long): Flow<List<IntervalEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

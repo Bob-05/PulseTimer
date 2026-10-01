@@ -4,13 +4,6 @@ import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,7 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,14 +30,14 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -56,13 +49,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -79,10 +73,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pulsetimer.data.entity.IntervalEntity
 import com.pulsetimer.viewmodel.TimerViewModel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlin.math.absoluteValue
-
-private enum class SaveButtonState { Idle, Saving, Success }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -94,12 +85,13 @@ fun EditorScreen(
     val selectedTemplate by viewModel.selectedTemplate.collectAsState()
     val intervals by viewModel.selectedTemplateIntervals.collectAsState()
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
 
     var name by remember(templateId) { mutableStateOf("") }
     var description by remember(templateId) { mutableStateOf("") }
     var initialized by remember(templateId) { mutableStateOf(false) }
-    var saveButtonState by remember { mutableStateOf(SaveButtonState.Idle) }
+    val latestName = rememberUpdatedState(name)
+    val latestDescription = rememberUpdatedState(description)
+    val latestInitialized = rememberUpdatedState(initialized)
 
     LaunchedEffect(templateId) {
         viewModel.selectTemplate(templateId)
@@ -111,6 +103,24 @@ fun EditorScreen(
             name = template.name
             description = template.description
             initialized = true
+        }
+    }
+
+    LaunchedEffect(templateId, selectedTemplate?.id, initialized, name, description) {
+        if (!initialized || selectedTemplate?.id != templateId) return@LaunchedEffect
+        delay(500)
+        viewModel.updateTemplateDetails(templateId, name, description)
+    }
+
+    DisposableEffect(templateId) {
+        onDispose {
+            if (latestInitialized.value) {
+                viewModel.updateTemplateDetails(
+                    templateId,
+                    latestName.value,
+                    latestDescription.value
+                )
+            }
         }
     }
 
@@ -163,6 +173,7 @@ fun EditorScreen(
     }
 
     var showAddDialog by remember { mutableStateOf(false) }
+    var editingInterval by remember { mutableStateOf<IntervalEntity?>(null) }
     val intervalsListState = rememberLazyListState()
 
     Scaffold(
@@ -192,26 +203,10 @@ fun EditorScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    SaveTemplateButton(
-                        state = saveButtonState,
-                        enabled = selectedTemplate != null,
-                        onClick = {
-                            val template = selectedTemplate ?: return@SaveTemplateButton
-                            if (saveButtonState != SaveButtonState.Idle) return@SaveTemplateButton
-                            scope.launch {
-                                saveButtonState = SaveButtonState.Saving
-                                viewModel.updateTemplate(
-                                    template.copy(
-                                        name = name.trim().ifEmpty { template.name },
-                                        description = description.trim()
-                                    )
-                                )
-                                delay(700)
-                                saveButtonState = SaveButtonState.Success
-                                delay(1600)
-                                saveButtonState = SaveButtonState.Idle
-                            }
-                        }
+                    Text(
+                        "Изменения сохраняются автоматически",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     FloatingActionButton(
                         onClick = { showAddDialog = true },
@@ -358,7 +353,7 @@ fun EditorScreen(
                     )
                 }
             } else {
-                items(intervals, key = { it.id }) { interval ->
+                itemsIndexed(intervals, key = { _, interval -> interval.id }) { index, interval ->
                     val itemDistance by remember(interval.id, intervalsListState) {
                         derivedStateOf {
                             val layout = intervalsListState.layoutInfo
@@ -377,7 +372,16 @@ fun EditorScreen(
                     }
                     IntervalItem(
                         interval = interval,
+                        canMoveUp = index > 0,
+                        canMoveDown = index < intervals.lastIndex,
+                        onEdit = { editingInterval = interval },
                         onDelete = { viewModel.deleteInterval(interval) },
+                        onMoveUp = {
+                            viewModel.moveInterval(templateId, interval.id, -1)
+                        },
+                        onMoveDown = {
+                            viewModel.moveInterval(templateId, interval.id, 1)
+                        },
                         onUpdate = viewModel::updateInterval,
                         modifier = Modifier
                             .animateItem()
@@ -403,72 +407,33 @@ fun EditorScreen(
             }
         )
     }
-}
-
-@Composable
-private fun SaveTemplateButton(
-    state: SaveButtonState,
-    enabled: Boolean,
-    onClick: () -> Unit
-) {
-    val containerColor = when (state) {
-        SaveButtonState.Success -> Color(0xFF2E7D32)
-        else -> MaterialTheme.colorScheme.secondaryContainer
-    }
-    val contentColor = when (state) {
-        SaveButtonState.Success -> Color.White
-        else -> MaterialTheme.colorScheme.onSecondaryContainer
-    }
-    ExtendedFloatingActionButton(
-        onClick = { if (enabled) onClick() },
-        containerColor = containerColor,
-        contentColor = contentColor,
-        icon = {
-            AnimatedContent(
-                targetState = state,
-                transitionSpec = {
-                    (fadeIn(tween(180)) + scaleIn(tween(220), initialScale = 0.6f))
-                        .togetherWith(fadeOut(tween(140)) + scaleOut(tween(180), targetScale = 0.6f))
-                },
-                label = "save_icon"
-            ) { s ->
-                when (s) {
-                    SaveButtonState.Idle -> Icon(Icons.Default.Save, contentDescription = null)
-                    SaveButtonState.Saving -> CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        strokeWidth = 2.dp,
-                        color = contentColor
+    editingInterval?.let { interval ->
+        EditIntervalDialog(
+            interval = interval,
+            onDismiss = { editingInterval = null },
+            onSave = { name, duration, color ->
+                viewModel.updateInterval(
+                    interval.copy(
+                        name = name,
+                        durationSeconds = duration,
+                        colorHex = color
                     )
-                    SaveButtonState.Success -> Icon(Icons.Default.Check, contentDescription = null)
-                }
-            }
-        },
-        text = {
-            AnimatedContent(
-                targetState = state,
-                transitionSpec = {
-                    (fadeIn(tween(180)) + scaleIn(tween(220), initialScale = 0.85f))
-                        .togetherWith(fadeOut(tween(140)) + scaleOut(tween(180), targetScale = 0.85f))
-                },
-                label = "save_text"
-            ) { s ->
-                Text(
-                    text = when (s) {
-                        SaveButtonState.Idle -> "Сохранить"
-                        SaveButtonState.Saving -> "Сохранение…"
-                        SaveButtonState.Success -> "Сохранено!"
-                    },
-                    fontWeight = FontWeight.SemiBold
                 )
+                editingInterval = null
             }
-        }
-    )
+        )
+    }
 }
 
 @Composable
 fun IntervalItem(
     interval: IntervalEntity,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onEdit: () -> Unit,
     onDelete: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
     onUpdate: (IntervalEntity) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -587,11 +552,37 @@ fun IntervalItem(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                IconButton(onClick = onEdit) {
+                    Icon(Icons.Default.Edit, contentDescription = "Изменить интервал")
+                }
                 IconButton(onClick = onDelete) {
                     Icon(
                         Icons.Default.Delete,
                         contentDescription = "Удалить интервал",
                         tint = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Порядок",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelMedium
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                IconButton(onClick = onMoveUp, enabled = canMoveUp) {
+                    Icon(
+                        Icons.Default.KeyboardArrowUp,
+                        contentDescription = "Переместить интервал выше"
+                    )
+                }
+                IconButton(onClick = onMoveDown, enabled = canMoveDown) {
+                    Icon(
+                        Icons.Default.KeyboardArrowDown,
+                        contentDescription = "Переместить интервал ниже"
                     )
                 }
             }
@@ -650,9 +641,39 @@ fun AddIntervalDialog(
     onDismiss: () -> Unit,
     onAdd: (String, Int, String) -> Unit
 ) {
-    var name by remember { mutableStateOf("") }
-    var duration by remember { mutableStateOf("") }
-    var selectedColor by remember { mutableStateOf("#FF3B30") }
+    IntervalEditorDialog(
+        interval = null,
+        onDismiss = onDismiss,
+        onSave = onAdd
+    )
+}
+
+@Composable
+private fun EditIntervalDialog(
+    interval: IntervalEntity,
+    onDismiss: () -> Unit,
+    onSave: (String, Int, String) -> Unit
+) {
+    IntervalEditorDialog(
+        interval = interval,
+        onDismiss = onDismiss,
+        onSave = onSave
+    )
+}
+
+@Composable
+private fun IntervalEditorDialog(
+    interval: IntervalEntity?,
+    onDismiss: () -> Unit,
+    onSave: (String, Int, String) -> Unit
+) {
+    var name by remember(interval?.id) { mutableStateOf(interval?.name.orEmpty()) }
+    var duration by remember(interval?.id) {
+        mutableStateOf(interval?.durationSeconds?.toString().orEmpty())
+    }
+    var selectedColor by remember(interval?.id) {
+        mutableStateOf(interval?.colorHex ?: "#FF3B30")
+    }
 
     val colors = listOf(
         "#FF3B30" to "Красный",
@@ -664,7 +685,7 @@ fun AddIntervalDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Новый интервал") },
+        title = { Text(if (interval == null) "Новый интервал" else "Изменить интервал") },
         text = {
             Column {
                 OutlinedTextField(
@@ -744,13 +765,15 @@ fun AddIntervalDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val dur = duration.toIntOrNull() ?: 10
+                    val dur = duration.toIntOrNull()
+                        ?: interval?.durationSeconds
+                        ?: 10
                     if (name.isNotBlank()) {
-                        onAdd(name, dur, selectedColor)
+                        onSave(name.trim(), dur, selectedColor)
                     }
                 }
             ) {
-                Text("Добавить")
+                Text(if (interval == null) "Добавить" else "Сохранить")
             }
         },
         dismissButton = {
