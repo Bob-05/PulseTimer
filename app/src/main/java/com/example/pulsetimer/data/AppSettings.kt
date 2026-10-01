@@ -18,7 +18,9 @@ data class AppSettings(
     val animatedBackgrounds: Boolean = true,
     val intervalAnimation: String = "SLIDE",
     val musicUri: String? = null,
-    val onboardingCompleted: Boolean = false
+    val onboardingCompleted: Boolean = false,
+    /** Пользователь явно принял Политику и Соглашение на экране согласия. */
+    val legalConsentAccepted: Boolean = false
 )
 
 object AppSettingsStore {
@@ -73,6 +75,7 @@ object AppSettingsStore {
                 putString("intervalAnimation", updated.intervalAnimation)
                 putString("musicUri", updated.musicUri)
                 putBoolean("onboardingCompleted", updated.onboardingCompleted)
+                putBoolean("legalConsentAccepted", updated.legalConsentAccepted)
             }
             mutableSettings.value = updated.copy(soundVolume = updated.soundVolume.coerceIn(0f, 1f))
         }
@@ -89,6 +92,7 @@ object AppSettingsStore {
         animatedBackgrounds = prefs.getBoolean("animatedBackgrounds", true),
         intervalAnimation = prefs.getString("intervalAnimation", "SLIDE") ?: "SLIDE",
         musicUri = prefs.getString("musicUri", null),
-        onboardingCompleted = prefs.getBoolean("onboardingCompleted", false)
+        onboardingCompleted = prefs.getBoolean("onboardingCompleted", false),
+        legalConsentAccepted = prefs.getBoolean("legalConsentAccepted", false)
     )
 }
