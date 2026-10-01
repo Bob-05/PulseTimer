@@ -58,21 +58,15 @@ android {
 
     sourceSets {
         getByName("main") {
-            // Подключаем сгенерированный каталог как дополнительный source set
-            // для assets. К моменту сборки APK файлы уже скопированы — за это
-            // отвечает зависимость preBuild → copyLegalDocs.
-            //
-            // ВАЖНО: передаём File, а не Provider<Directory>. AGP 8.x не
-            // принимает Provider в SourceSet API и падает с ошибкой
-            // «You cannot add Provider instances to the Android SourceSet API».
-            assets.srcDir(legalAssetsDir.get().asFile)
+            // Каталог сгенерирован до сборки APK зависимостью preBuild → copyLegalDocs.
+            // Добавляем File через directories, чтобы не использовать устаревший srcDir API.
+            assets.directories.add(legalAssetsDir.get().asFile.absolutePath)
         }
     }
 }
 
 dependencies {
     implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.navigation.compose)
@@ -87,11 +81,6 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
-    testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
-    androidTestImplementation(libs.androidx.espresso.core)
-    androidTestImplementation(platform(libs.androidx.compose.bom))
-    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
-    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
