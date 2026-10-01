@@ -91,7 +91,9 @@ fun MainScreen(
     var deletingId by remember { mutableStateOf<Long?>(null) }
 
     val hasActiveWorkout =
-        timerState.isRunning && !timerState.isFinished && timerState.templateId > 0L
+        (timerState.isRunning || timerState.isPaused) &&
+            !timerState.isFinished &&
+            timerState.templateId > 0L
 
     LaunchedEffect(templates.size) {
         if (templates.isNotEmpty() && pagerState.currentPage >= templates.size) {

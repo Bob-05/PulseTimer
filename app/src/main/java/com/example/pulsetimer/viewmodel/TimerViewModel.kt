@@ -146,39 +146,29 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun pauseTimer() {
-        val context = getApplication<Application>()
-        context.startForegroundService(
-            Intent(context, TimerService::class.java).apply { action = TimerService.ACTION_PAUSE }
-        )
+        sendTimerAction(TimerService.ACTION_PAUSE)
     }
 
     fun resumeTimer() {
-        val context = getApplication<Application>()
-        context.startForegroundService(
-            Intent(context, TimerService::class.java).apply { action = TimerService.ACTION_RESUME }
-        )
+        sendTimerAction(TimerService.ACTION_RESUME)
     }
 
     fun skipInterval() {
-        val context = getApplication<Application>()
-        context.startForegroundService(
-            Intent(context, TimerService::class.java).apply { action = TimerService.ACTION_SKIP }
-        )
+        sendTimerAction(TimerService.ACTION_SKIP)
     }
 
     fun previousInterval() {
-        val context = getApplication<Application>()
-        context.startForegroundService(
-            Intent(context, TimerService::class.java).apply {
-                action = TimerService.ACTION_PREVIOUS
-            }
-        )
+        sendTimerAction(TimerService.ACTION_PREVIOUS)
     }
 
     fun stopTimer() {
+        sendTimerAction(TimerService.ACTION_STOP)
+    }
+
+    private fun sendTimerAction(action: String) {
         val context = getApplication<Application>()
         context.startForegroundService(
-            Intent(context, TimerService::class.java).apply { action = TimerService.ACTION_STOP }
+            Intent(context, TimerService::class.java).setAction(action)
         )
     }
 }
