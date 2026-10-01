@@ -73,7 +73,9 @@ import java.util.Date
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
-    onShowOnboarding: () -> Unit
+    onShowOnboarding: () -> Unit,
+    onOpenPrivacy: () -> Unit,
+    onOpenTerms: () -> Unit
 ) {
     val context = LocalContext.current
     val settings by AppSettingsStore.settings.collectAsState()
@@ -84,8 +86,6 @@ fun SettingsScreen(
     var pendingDeleteLog by remember { mutableStateOf<SessionLogEntity?>(null) }
     var deletingLogId by remember { mutableStateOf<Long?>(null) }
 
-    // Статус уведомлений. Читается при первом входе и при каждом ON_RESUME,
-    // чтобы UI обновился после возврата из системных настроек уведомлений.
     var notificationsEnabled by remember {
         mutableStateOf(
             NotificationManagerCompat.from(context).areNotificationsEnabled()
@@ -142,7 +142,6 @@ fun SettingsScreen(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // === Статус уведомлений ===
             item { SectionTitle("Уведомления") }
             item {
                 Card(
@@ -216,7 +215,6 @@ fun SettingsScreen(
                 }
             }
 
-            // === Звук и голос ===
             item { SectionTitle("Звук и голос") }
             item {
                 SettingSwitch(
@@ -291,7 +289,6 @@ fun SettingsScreen(
                 }
             }
 
-            // === Тактильный отклик ===
             item { SectionTitle("Тактильный отклик") }
             item {
                 SettingSwitch(
@@ -317,7 +314,6 @@ fun SettingsScreen(
                 )
             }
 
-            // === Интерфейс и тема ===
             item { SectionTitle("Интерфейс и тема") }
             item {
                 ChoiceCard(
@@ -360,46 +356,34 @@ fun SettingsScreen(
                 )
             }
 
-            // === Справка ===
             item { SectionTitle("Справка") }
             item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = onShowOnboarding,
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("📖", fontSize = 28.sp)
-                        Spacer(Modifier.width(16.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "Обучение",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                "Повторно посмотреть инструкцию по работе с приложением",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
+                NavigationCard(
+                    emoji = "📖",
+                    title = "Обучение",
+                    subtitle = "Повторно посмотреть инструкцию по работе с приложением",
+                    onClick = onShowOnboarding
+                )
             }
 
-            // === История тренировок ===
+            item { SectionTitle("Документы") }
+            item {
+                NavigationCard(
+                    emoji = "📄",
+                    title = "Политика конфиденциальности",
+                    subtitle = "Как приложение обращается с данными",
+                    onClick = onOpenPrivacy
+                )
+            }
+            item {
+                NavigationCard(
+                    emoji = "📜",
+                    title = "Пользовательское соглашение",
+                    subtitle = "Условия использования приложения",
+                    onClick = onOpenTerms
+                )
+            }
+
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -545,6 +529,49 @@ private fun ChoiceCard(
                 RadioButton(selected = selected == value, onClick = { onSelected(value) })
                 Text(label)
             }
+        }
+    }
+}
+
+@Composable
+private fun NavigationCard(
+    emoji: String,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(emoji, fontSize = 28.sp)
+            Spacer(Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
