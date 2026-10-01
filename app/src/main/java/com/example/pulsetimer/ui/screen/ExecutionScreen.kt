@@ -75,10 +75,10 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
@@ -329,7 +329,15 @@ private fun PhaseFullScreen(
     onFinish: () -> Unit
 ) {
     val phaseColor = parseColor(phase.colorHex)
-    val screenWidthDp = LocalConfiguration.current.screenWidthDp.toFloat()
+
+    // Ширина контейнера в dp. LocalWindowInfo.current.containerSize даёт размер
+    // в пикселях — переводим в dp через LocalDensity. Это корректнее, чем
+    // LocalConfiguration.current.screenWidthDp: учитывает multi-window,
+    // складные экраны и изменения размера окна.
+    val density = LocalDensity.current
+    val containerWidthPx = LocalWindowInfo.current.containerSize.width
+    val screenWidthDp = with(density) { containerWidthPx.toDp().value }
+
     val timerFontSize = ((screenWidthDp - 48f) / 3.6f).coerceIn(56f, 120f).sp
     val canGoPrevious = phase.index > 0
 
