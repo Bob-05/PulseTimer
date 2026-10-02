@@ -1,6 +1,8 @@
 package com.pulsetimer.ui.screen
 
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.provider.Settings
 import android.text.format.DateFormat
 import android.widget.Toast
@@ -81,10 +83,28 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.data.entity.SessionLogEntity
+import com.pulsetimer.ui.component.CustomSignalEditorDialog
+import com.pulsetimer.ui.component.SignalPreviewPlayer
 import com.pulsetimer.viewmodel.TimerViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Date
+import java.util.Locale
+
+/**
+ * Состояние выбранного, но ещё не подтверждённого сигнала.
+ *
+ * @param uri URI файла.
+ * @param initialStartMs начальное смещение (при редактировании существующего).
+ * @param isReplacement true — пользователь выбрал новый файл в пикере.
+ *   Тогда при отмене нужно вернуть persistable-доступ, а при сохранении —
+ *   освободить доступ к прежнему URI.
+ */
+private data class PendingSignal(
+    val uri: Uri,
+    val initialStartMs: Int,
+    val isReplacement: Boolean
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -106,6 +126,14 @@ fun SettingsScreen(
     var workoutSettingsExpanded by rememberSaveable { mutableStateOf(false) }
     var helpExpanded by rememberSaveable { mutableStateOf(false) }
     var historyExpanded by rememberSaveable { mutableStateOf(false) }
+
+    var pendingSignal by remember { mutableStateOf<PendingSignal?>(null) }
+
+    // Плеер превью: живёт вместе с экраном, dispose() в onDispose.
+    val signalPreview = remember(context) { SignalPreviewPlayer(context) }
+    DisposableEffect(signalPreview) {
+        onDispose { signalPreview.dispose() }
+    }
 
     var notificationsEnabled by remember {
         mutableStateOf(
@@ -133,7 +161,9 @@ fun SettingsScreen(
                     uri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
+                val previous = settings.musicUri
                 AppSettingsStore.update { it.copy(musicUri = uri.toString()) }
+                releasePersistedUri(context, previous, keep = uri.toString())
             } catch (error: SecurityException) {
                 Toast.makeText(context, "Не удалось сохранить доступ к аудиофайлу", Toast.LENGTH_LONG).show()
             }
@@ -143,22 +173,23 @@ fun SettingsScreen(
     val signalPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
-        if (uri != null) {
-            try {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-                AppSettingsStore.update {
-                    it.copy(customSignalUri = uri.toString(), toneType = "CUSTOM")
-                }
-            } catch (error: SecurityException) {
-                Toast.makeText(
-                    context,
-                    "Не удалось сохранить доступ к аудиофайлу",
-                    Toast.LENGTH_LONG
-                ).show()
-            }
+        if (uri == null) return@rememberLauncherForActivityResult
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+            pendingSignal = PendingSignal(
+                uri = uri,
+                initialStartMs = 0,
+                isReplacement = true
+            )
+        } catch (error: SecurityException) {
+            Toast.makeText(
+                context,
+                "Не удалось сохранить доступ к аудиофайлу",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
@@ -182,8 +213,6 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
-            // Отступ сверху 12dp — блоки не прилипают к TopAppBar.
-            // Снизу 24dp — «воздух» под последним блоком.
             contentPadding = PaddingValues(
                 start = 16.dp,
                 end = 16.dp,
@@ -346,6 +375,13 @@ fun SettingsScreen(
                             onValueChange = { localVolume = it },
                             onValueChangeFinished = {
                                 AppSettingsStore.update { it.copy(soundVolume = localVolume) }
+                                val fresh = AppSettingsStore.settings.value
+                                signalPreview.play(
+                                    toneType = fresh.toneType,
+                                    customUri = fresh.customSignalUri,
+                                    customStartMs = fresh.customSignalStartMs,
+                                    volume = fresh.soundVolume
+                                )
                             },
                             valueRange = 0f..1f
                         )
@@ -367,6 +403,14 @@ fun SettingsScreen(
                         selected = settings.toneType,
                         onSelected = { value ->
                             AppSettingsStore.update { it.copy(toneType = value) }
+                            // Свежие значения — после update(), а не снапшот из композиции.
+                            val fresh = AppSettingsStore.settings.value
+                            signalPreview.play(
+                                toneType = value,
+                                customUri = fresh.customSignalUri,
+                                customStartMs = fresh.customSignalStartMs,
+                                volume = fresh.soundVolume
+                            )
                         }
                     )
                     Column(
@@ -376,11 +420,10 @@ fun SettingsScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            if (settings.customSignalUri == null) {
-                                "Можно выбрать собственный аудиофайл для сигнала интервала."
-                            } else {
-                                "Свой аудиосигнал добавлен."
-                            },
+                            text = customSignalDescription(
+                                settings.customSignalUri,
+                                settings.customSignalStartMs
+                            ),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -394,16 +437,35 @@ fun SettingsScreen(
                                 )
                             }
                             if (settings.customSignalUri != null) {
+                                OutlinedButton(onClick = {
+                                    val uriStr = settings.customSignalUri ?: return@OutlinedButton
+                                    val parsed = runCatching { Uri.parse(uriStr) }.getOrNull()
+                                        ?: return@OutlinedButton
+                                    pendingSignal = PendingSignal(
+                                        uri = parsed,
+                                        initialStartMs = settings.customSignalStartMs,
+                                        isReplacement = false
+                                    )
+                                }) {
+                                    Text("Изменить фрагмент")
+                                }
+                            }
+                        }
+                        if (settings.customSignalUri != null) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Button(onClick = {
+                                    val previous = settings.customSignalUri
                                     AppSettingsStore.update {
                                         it.copy(
                                             customSignalUri = null,
+                                            customSignalStartMs = 0,
                                             toneType = if (it.toneType == "CUSTOM") "CLASSIC" else it.toneType
                                         )
                                     }
+                                    releasePersistedUri(context, previous, keep = null)
                                 }) {
                                     Icon(Icons.Default.Delete, contentDescription = null)
-                                    Text("Удалить")
+                                    Text("Удалить сигнал")
                                 }
                             }
                         }
@@ -426,7 +488,9 @@ fun SettingsScreen(
                             }
                             if (settings.musicUri != null) {
                                 Button(onClick = {
+                                    val previous = settings.musicUri
                                     AppSettingsStore.update { it.copy(musicUri = null) }
+                                    releasePersistedUri(context, previous, keep = null)
                                 }) {
                                     Icon(Icons.Default.Delete, contentDescription = null)
                                     Text("Удалить мелодию")
@@ -554,6 +618,47 @@ fun SettingsScreen(
         }
     }
 
+    // Диалог-редактор пользовательского сигнала.
+    pendingSignal?.let { pending ->
+        CustomSignalEditorDialog(
+            signalUri = pending.uri,
+            initialStartMs = pending.initialStartMs,
+            onSave = { startMs ->
+                val previousUri = settings.customSignalUri
+                AppSettingsStore.update {
+                    it.copy(
+                        customSignalUri = pending.uri.toString(),
+                        customSignalStartMs = startMs,
+                        toneType = "CUSTOM"
+                    )
+                }
+                if (pending.isReplacement &&
+                    previousUri != null &&
+                    previousUri != pending.uri.toString()
+                ) {
+                    releasePersistedUri(context, previousUri, keep = pending.uri.toString())
+                }
+                pendingSignal = null
+                // Сразу дать пользователю услышать, что получилось.
+                val fresh = AppSettingsStore.settings.value
+                signalPreview.play(
+                    toneType = fresh.toneType,
+                    customUri = fresh.customSignalUri,
+                    customStartMs = fresh.customSignalStartMs,
+                    volume = fresh.soundVolume
+                )
+            },
+            onDismiss = {
+                if (pending.isReplacement &&
+                    settings.customSignalUri != pending.uri.toString()
+                ) {
+                    releasePersistedUri(context, pending.uri.toString(), keep = null)
+                }
+                pendingSignal = null
+            }
+        )
+    }
+
     pendingDeleteLog?.let { log ->
         AlertDialog(
             onDismissRequest = { pendingDeleteLog = null },
@@ -595,16 +700,41 @@ fun SettingsScreen(
     }
 }
 
+private fun customSignalDescription(uri: String?, startMs: Int): String {
+    if (uri == null) {
+        return "Можно выбрать собственный аудиофайл для сигнала интервала. " +
+                "Если файл длиннее 1 секунды — выберите нужный фрагмент."
+    }
+    return if (startMs > 0) {
+        String.format(
+            Locale.getDefault(),
+            "Свой сигнал добавлен. Используется фрагмент с %.1f сек, длительностью 1 сек.",
+            startMs / 1000f
+        )
+    } else {
+        "Свой аудиосигнал добавлен (обрезается до 1 секунды с начала файла)."
+    }
+}
+
 /**
- * Сворачиваемая группа настроек.
- *
- * Один LazyColumn-item = одна Card:
- *  - шапка с emoji-чипом, заголовком, подзаголовком и шевроном;
- *  - шеврон плавно вращается 0° ↔ 180° (animateFloatAsState);
- *  - контент раскрывается/сворачивается через AnimatedVisibility
- *    со spring-спецификацией (DampingRatioNoBouncy): движение «живое»,
- *    но без overshoot — высота не «выглядывает» за пределы карточки.
+ * Освобождает persistable URI-разрешение, если оно больше не используется.
  */
+private fun releasePersistedUri(
+    context: Context,
+    uriString: String?,
+    keep: String?
+) {
+    if (uriString == null) return
+    if (uriString == keep) return
+    val parsed = runCatching { Uri.parse(uriString) }.getOrNull() ?: return
+    runCatching {
+        context.contentResolver.releasePersistableUriPermission(
+            parsed,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION
+        )
+    }
+}
+
 @Composable
 private fun CollapsibleSettingsGroup(
     emoji: String,
@@ -655,8 +785,6 @@ private fun CollapsibleSettingsGroup(
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
                     )
                 }
-                // Шеврон: tween, а не spring — при повороте на 180° spring
-                // дал бы overshoot и иконка «выглядывала» бы за границы.
                 val rotation by animateFloatAsState(
                     targetValue = if (expanded) 180f else 0f,
                     animationSpec = tween(
@@ -755,12 +883,15 @@ private fun ChoiceCard(
             .padding(vertical = 8.dp)
     ) {
         Text(title, style = MaterialTheme.typography.bodyLarge)
-        choices.forEach { (value, label) ->
+        choices.forEach { (value: String, label: String) ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                RadioButton(selected = selected == value, onClick = { onSelected(value) })
+                RadioButton(
+                    selected = selected == value,
+                    onClick = { onSelected(value) }
+                )
                 Text(label)
             }
         }

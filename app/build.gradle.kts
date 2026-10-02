@@ -30,7 +30,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.pulsetimer"
+        applicationId = "com.bahtiarazizov.pulsetimer"
         minSdk = 28
         targetSdk = 36
         versionCode = 1

@@ -13,6 +13,8 @@ data class AppSettings(
     val soundVolume: Float = 0.8f,
     val toneType: String = "CLASSIC",
     val customSignalUri: String? = null,
+    /** Смещение начала воспроизведения в миллисекундах для пользовательского сигнала. */
+    val customSignalStartMs: Int = 0,
     val vibrationEnabled: Boolean = true,
     val vibrationProfile: String = "SPORT",
     val theme: String = "OLED",
@@ -70,6 +72,10 @@ object AppSettingsStore {
                 putFloat("soundVolume", updated.soundVolume.coerceIn(0f, 1f))
                 putString("toneType", updated.toneType)
                 putString("customSignalUri", updated.customSignalUri)
+                putInt(
+                    "customSignalStartMs",
+                    updated.customSignalStartMs.coerceAtLeast(0)
+                )
                 putBoolean("vibrationEnabled", updated.vibrationEnabled)
                 putString("vibrationProfile", updated.vibrationProfile)
                 putString("theme", updated.theme)
@@ -79,7 +85,10 @@ object AppSettingsStore {
                 putBoolean("onboardingCompleted", updated.onboardingCompleted)
                 putBoolean("legalConsentAccepted", updated.legalConsentAccepted)
             }
-            mutableSettings.value = updated.copy(soundVolume = updated.soundVolume.coerceIn(0f, 1f))
+            mutableSettings.value = updated.copy(
+                soundVolume = updated.soundVolume.coerceIn(0f, 1f),
+                customSignalStartMs = updated.customSignalStartMs.coerceAtLeast(0)
+            )
         }
     }
 
@@ -89,6 +98,7 @@ object AppSettingsStore {
         soundVolume = prefs.getFloat("soundVolume", 0.8f),
         toneType = prefs.getString("toneType", "CLASSIC") ?: "CLASSIC",
         customSignalUri = prefs.getString("customSignalUri", null),
+        customSignalStartMs = prefs.getInt("customSignalStartMs", 0).coerceAtLeast(0),
         vibrationEnabled = prefs.getBoolean("vibrationEnabled", true),
         vibrationProfile = prefs.getString("vibrationProfile", "SPORT") ?: "SPORT",
         theme = prefs.getString("theme", "OLED") ?: "OLED",

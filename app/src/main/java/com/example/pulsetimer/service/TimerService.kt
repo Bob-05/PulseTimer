@@ -35,6 +35,7 @@ import com.pulsetimer.data.database.AppDatabase
 import com.pulsetimer.data.entity.IntervalEntity
 import com.pulsetimer.data.entity.SessionLogEntity
 import com.pulsetimer.speech.SpeechEngine
+import com.pulsetimer.util.ToneGenerator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -50,9 +51,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.PI
-import kotlin.math.exp
-import kotlin.math.sin
 
 class TimerService : Service() {
 
@@ -80,6 +78,8 @@ class TimerService : Service() {
     private var volumeAnimator: ValueAnimator? = null
     private var toneTrack: AudioTrack? = null
     private var customSignalPlayer: MediaPlayer? = null
+    private var customSignalStopRunnable: Runnable? = null
+    private var musicDuckedBySignal: Boolean = false
     private var toneGeneration: Long = 0L
 
     // Состояние озвучки, которым управляет сервис поверх SpeechEngine.
@@ -154,8 +154,6 @@ class TimerService : Service() {
         wakeLock?.setReferenceCounted(false)
         AppSettingsStore.initialize(this)
 
-        // Прогреваем TTS заранее — только если голос реально включён.
-        // Если MainActivity уже прогрела движок, это no-op.
         if (AppSettingsStore.settings.value.voiceEnabled) {
             SpeechEngine.warmUp(this)
         }
@@ -288,9 +286,6 @@ class TimerService : Service() {
                 return@launch
             }
 
-            // Раньше здесь было блокирующее ожидание TTS до 2 с. Теперь
-            // тренировка стартует мгновенно, а первая фраза «догоняет» через
-            // SpeechEngine.onReady в speakInterval().
             templateAudioUri = template.audioUri
             templateBackgroundType = template.backgroundType
             templateBackgroundValue = template.backgroundValue
@@ -735,15 +730,32 @@ class TimerService : Service() {
         if (toneTrack === track) toneTrack = null
     }
 
-    private fun releaseCustomSignalPlayer() {
+    /**
+     * Отпускает плеер пользовательского сигнала и, если музыка была приглушена
+     * под этот сигнал, возвращает ей исходную громкость.
+     *
+     * @param restoreMusic false используется в момент, когда мы собираемся
+     *   сразу запустить новый сигнал — тогда громкость восстанавливать
+     *   не нужно (иначе получим мерцание 0.5→1→0.5 за 300 мс).
+     */
+    private fun releaseCustomSignalPlayer(restoreMusic: Boolean = true) {
+        customSignalStopRunnable?.let(mainHandler::removeCallbacks)
+        customSignalStopRunnable = null
+
         val player = customSignalPlayer
         customSignalPlayer = null
-        if (player == null) return
-        releaseMediaPlayer(player)
+        if (player != null) releaseMediaPlayer(player)
+
+        if (restoreMusic) {
+            restoreMusicAfterCustomSignal(AppSettingsStore.settings.value.soundVolume)
+        } else {
+            musicDuckedBySignal = false
+        }
     }
 
     private fun releaseMediaPlayer(player: MediaPlayer) {
         player.setOnPreparedListener(null)
+        player.setOnSeekCompleteListener(null)
         player.setOnCompletionListener(null)
         player.setOnErrorListener(null)
         try { if (player.isPlaying) player.stop() } catch (_: IllegalStateException) { }
@@ -753,6 +765,9 @@ class TimerService : Service() {
 
     private fun releasePlayerSafely() {
         cancelVolumeAnimator()
+        // Флаг сбрасываем до обнуления mediaPlayer: после обнуления
+        // восстанавливать громкость уже не на чем.
+        musicDuckedBySignal = false
         val p = mediaPlayer
         mediaPlayer = null
         playingAudioUri = null
@@ -839,24 +854,27 @@ class TimerService : Service() {
         }
         val settings = AppSettingsStore.settings.value
         if (!settings.soundEnabled) return
-        val durationMillis = when {
-            isTransition && settings.toneType == "GONG" -> 700
-            isTransition && settings.toneType == "CHIME" -> 600
-            isTransition && settings.toneType == "DOUBLE" -> 360
-            isTransition && settings.toneType == "DIGITAL" -> 420
-            isTransition -> 450
-            else -> 120
-        }
+        val durationMillis = ToneGenerator.durationFor(settings.toneType, isTransition)
         val generation = ++toneGeneration
         toneTrack?.let(::releaseToneTrack)
-        releaseCustomSignalPlayer()
+        releaseCustomSignalPlayer(restoreMusic = false)
         if (settings.toneType == "CUSTOM") {
-            playCustomSignal(settings.customSignalUri, settings.soundVolume, generation)
+            playCustomSignal(
+                signalUri = settings.customSignalUri,
+                volume = settings.soundVolume,
+                generation = generation,
+                duckMusic = isTransition,
+                startMs = settings.customSignalStartMs
+            )
             return
         }
 
         serviceScope.launch(Dispatchers.Default) {
-            val samples = createToneSamples(settings.toneType, durationMillis, settings.soundVolume)
+            val samples = ToneGenerator.createSamples(
+                settings.toneType,
+                durationMillis,
+                settings.soundVolume
+            )
             val track = try {
                 AudioTrack.Builder()
                     .setAudioAttributes(
@@ -868,7 +886,7 @@ class TimerService : Service() {
                     .setAudioFormat(
                         AudioFormat.Builder()
                             .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                            .setSampleRate(44_100)
+                            .setSampleRate(ToneGenerator.SAMPLE_RATE)
                             .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                             .build()
                     )
@@ -950,12 +968,27 @@ class TimerService : Service() {
         }
     }
 
-    private fun playCustomSignal(signalUri: String?, volume: Float, generation: Long) {
+    /**
+     * Проигрывает пользовательский сигнал длительностью не более
+     * [ToneGenerator.CUSTOM_SIGNAL_MAX_DURATION_MS] со смещением [startMs].
+     *
+     * Если файл длиннее секунды — старт начинается с выбранного в UI
+     * смещения и обрезается авто-стопом. Если короче — играет с начала
+     * и завершается сам.
+     */
+    private fun playCustomSignal(
+        signalUri: String?,
+        volume: Float,
+        generation: Long,
+        duckMusic: Boolean,
+        startMs: Int
+    ) {
         if (signalUri == null) {
             Log.e(TAG, "Custom signal is selected but no audio URI is configured")
             return
         }
 
+        val safeStartMs = startMs.coerceAtLeast(0)
         val player = MediaPlayer()
         customSignalPlayer = player
         try {
@@ -979,44 +1012,41 @@ class TimerService : Service() {
                     }
                     return@setOnPreparedListener
                 }
-                try {
-                    preparedPlayer.start()
-                    val music = mediaPlayer
-                    if (music.safeIsPlaying) {
-                        cancelVolumeAnimator()
-                        volumeAnimator = ValueAnimator.ofFloat(1f, 0.5f).apply {
-                            duration = 140
-                            addUpdateListener { animator ->
-                                if (mediaPlayer === music) {
-                                    val level = (animator.animatedValue as Float) * volume
-                                    music.safeSetVolume(level)
-                                }
-                            }
-                            start()
+
+                if (safeStartMs > 0) {
+                    preparedPlayer.setOnSeekCompleteListener { seeked ->
+                        seeked.setOnSeekCompleteListener(null)
+                        if (generation != toneGeneration ||
+                            !AppSettingsStore.settings.value.soundEnabled ||
+                            customSignalPlayer !== seeked
+                        ) {
+                            if (customSignalPlayer === seeked) releaseCustomSignalPlayer()
+                            else releaseMediaPlayer(seeked)
+                            return@setOnSeekCompleteListener
+                        }
+                        try {
+                            seeked.start()
+                            if (duckMusic) duckMusicForCustomSignal(volume)
+                            scheduleCustomSignalAutoStop(seeked, generation)
+                        } catch (error: IllegalStateException) {
+                            Log.e(TAG, "Unable to play custom signal after seek", error)
+                            releaseCustomSignalPlayer()
                         }
                     }
-                } catch (error: IllegalStateException) {
-                    Log.e(TAG, "Unable to play custom signal", error)
-                    releaseCustomSignalPlayer()
+                    runCatching {
+                        preparedPlayer.seekTo(safeStartMs.toLong(), MediaPlayer.SEEK_CLOSEST)
+                    }.onFailure { error ->
+                        Log.e(TAG, "seekTo failed, falling back to start", error)
+                        preparedPlayer.setOnSeekCompleteListener(null)
+                        startCustomSignalFromBeginning(preparedPlayer, volume, generation, duckMusic)
+                    }
+                } else {
+                    startCustomSignalFromBeginning(preparedPlayer, volume, generation, duckMusic)
                 }
             }
             player.setOnCompletionListener { completedPlayer ->
                 if (customSignalPlayer === completedPlayer) {
                     releaseCustomSignalPlayer()
-                    val music = mediaPlayer
-                    if (music.safeIsPlaying) {
-                        cancelVolumeAnimator()
-                        volumeAnimator = ValueAnimator.ofFloat(0.5f, 1f).apply {
-                            duration = 250
-                            addUpdateListener { animator ->
-                                if (mediaPlayer === music) {
-                                    val level = (animator.animatedValue as Float) * volume
-                                    music.safeSetVolume(level)
-                                }
-                            }
-                            start()
-                        }
-                    }
                 }
             }
             player.setOnErrorListener { _, what, extra ->
@@ -1031,73 +1061,85 @@ class TimerService : Service() {
         }
     }
 
-    private fun createToneSamples(type: String, durationMillis: Int, volume: Float): ShortArray {
-        val sampleRate = 44_100
-        val sampleCount = sampleRate * durationMillis / 1_000
-        return ShortArray(sampleCount) { index ->
-            val time = index.toDouble() / sampleRate
-            val progress = index.toDouble() / sampleCount
-            val wave = when (type) {
-                "WHISTLE" -> sin(2.0 * PI * (1_400.0 + 800.0 * progress) * time)
-                "DOUBLE" -> {
-                    val pulseProgress = when {
-                        progress < 0.42 -> progress / 0.42
-                        progress in 0.58..1.0 -> (progress - 0.58) / 0.42
-                        else -> 0.0
-                    }
-                    sin(2.0 * PI * 880.0 * time) *
-                            minOf(1.0, pulseProgress * 12.0, (1.0 - pulseProgress) * 12.0)
-                }
-                "DIGITAL" -> {
-                    val noteProgress = (progress * 3.0).coerceAtMost(2.999999)
-                    val noteIndex = noteProgress.toInt()
-                    val notePhase = noteProgress - noteIndex
-                    val frequency = when (noteIndex) {
-                        0 -> 523.25
-                        1 -> 659.25
-                        else -> 783.99
-                    }
-                    sin(2.0 * PI * frequency * time) *
-                            minOf(1.0, notePhase * 12.0, (1.0 - notePhase) * 12.0)
-                }
-                "CHIME" -> {
-                    val decay = exp(-4.0 * progress)
-                    decay * (
-                            sin(2.0 * PI * 659.25 * time) +
-                                    0.45 * sin(2.0 * PI * 1_318.5 * time) +
-                                    0.2 * sin(2.0 * PI * 1_977.75 * time)
-                            ) / 1.65
-                }
-                "GONG" -> {
-                    val decay = exp(-3.5 * progress)
-                    decay * (
-                            sin(2.0 * PI * 420.0 * time) +
-                                    0.55 * sin(2.0 * PI * 630.0 * time) +
-                                    0.3 * sin(2.0 * PI * 1_050.0 * time)
-                            ) / 1.85
-                }
+    private fun startCustomSignalFromBeginning(
+        preparedPlayer: MediaPlayer,
+        volume: Float,
+        generation: Long,
+        duckMusic: Boolean
+    ) {
+        try {
+            preparedPlayer.start()
+            if (duckMusic) duckMusicForCustomSignal(volume)
+            scheduleCustomSignalAutoStop(preparedPlayer, generation)
+        } catch (error: IllegalStateException) {
+            Log.e(TAG, "Unable to play custom signal", error)
+            releaseCustomSignalPlayer()
+        }
+    }
 
-                else -> sin(2.0 * PI * 880.0 * time)
+    /**
+     * Аппаратный «стоп-кран» для пользовательского сигнала.
+     * Через [ToneGenerator.CUSTOM_SIGNAL_MAX_DURATION_MS] отпускает плеер
+     * и восстанавливает громкость музыки, независимо от того, закончился
+     * ли файл.
+     */
+    private fun scheduleCustomSignalAutoStop(player: MediaPlayer, generation: Long) {
+        customSignalStopRunnable?.let(mainHandler::removeCallbacks)
+        val runnable = Runnable {
+            customSignalStopRunnable = null
+            if (generation != toneGeneration) return@Runnable
+            if (customSignalPlayer !== player) return@Runnable
+            releaseCustomSignalPlayer()
+        }
+        customSignalStopRunnable = runnable
+        mainHandler.postDelayed(runnable, ToneGenerator.CUSTOM_SIGNAL_MAX_DURATION_MS)
+    }
+
+    private fun duckMusicForCustomSignal(volume: Float) {
+        if (musicDuckedBySignal) return
+        val music = mediaPlayer ?: return
+        if (!music.safeIsPlaying) return
+        cancelVolumeAnimator()
+        musicDuckedBySignal = true
+        volumeAnimator = ValueAnimator.ofFloat(1f, 0.5f).apply {
+            duration = 140
+            addUpdateListener { animator ->
+                if (mediaPlayer === music) {
+                    val level = (animator.animatedValue as Float) * volume
+                    music.safeSetVolume(level)
+                }
             }
-            val edge = minOf(1.0, progress * 35.0, (1.0 - progress) * 35.0)
-            (wave * edge * volume.coerceIn(0f, 1f) * Short.MAX_VALUE).toInt().toShort()
+            start()
+        }
+    }
+
+    private fun restoreMusicAfterCustomSignal(volume: Float) {
+        if (!musicDuckedBySignal) return
+        musicDuckedBySignal = false
+        val music = mediaPlayer ?: return
+        if (!music.safeIsPlaying) return
+        cancelVolumeAnimator()
+        volumeAnimator = ValueAnimator.ofFloat(0.5f, 1f).apply {
+            duration = 250
+            addUpdateListener { animator ->
+                if (mediaPlayer === music) {
+                    val level = (animator.animatedValue as Float) * volume
+                    music.safeSetVolume(level)
+                }
+            }
+            start()
         }
     }
 
     private fun cancelTonePlayback() {
         toneGeneration++
         toneTrack?.let(::releaseToneTrack)
-        releaseCustomSignalPlayer()
+        // Принудительно восстанавливаем музыку: сигнал прерывается
+        // (смена интервала / пауза / стоп), и она не должна остаться
+        // приглушённой.
+        releaseCustomSignalPlayer(restoreMusic = true)
     }
 
-    /**
-     * Озвучка имени интервала. Если движок ещё не готов — запоминаем текст
-     * и просим SpeechEngine разбудить нас, когда он поднимется.
-     *
-     * ВАЖНО: если сервис будет уничтожен до готовности TTS, колбэк
-     * удерживается SpeechEngine. onDestroy обязан вызвать
-     * SpeechEngine.clearPendingCallbacks() — иначе утечка памяти.
-     */
     private fun speakInterval(name: String) {
         if (!AppSettingsStore.settings.value.voiceEnabled) return
         val phaseIndex = currentIndex
@@ -1121,7 +1163,6 @@ class TimerService : Service() {
             pendingSpeechIndex = -1
             return
         }
-        // Завершение тренировки имеет приоритет над именем интервала.
         if (completionSpeechPending) return
         val speech = pendingSpeech ?: return
         if (!AppSettingsStore.settings.value.voiceEnabled ||
@@ -1210,8 +1251,6 @@ class TimerService : Service() {
             toneTrack?.let(::releaseToneTrack)
             releaseCustomSignalPlayer()
             if (!keepTextToSpeech) {
-                // SpeechEngine живёт уровнем выше сервиса — глушим только
-                // текущую реплику, а не сам движок.
                 SpeechEngine.stop()
             }
             audioFocusRequest?.let { runCatching { audioManager.abandonAudioFocusRequest(it) } }
@@ -1232,8 +1271,6 @@ class TimerService : Service() {
         serviceScope.cancel()
         if (wakeLock?.isHeld == true) wakeLock?.release()
         releaseMediaResources()
-        // Снимаем listener и сбрасываем pending-колбэки, чтобы SpeechEngine
-        // не держал ссылку на уничтоженный сервис (иначе — утечка памяти).
         SpeechEngine.setUtteranceProgressListener(null)
         SpeechEngine.clearPendingCallbacks()
     }

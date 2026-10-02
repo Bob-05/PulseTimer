@@ -47,11 +47,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
-/**
- * Тип визуализации на странице онбординга.
- * Вместо одного эмодзи показываем мини-сцену из Compose-примитивов —
- * так пользователю понятнее, о чём именно идёт речь.
- */
 private enum class OnboardingVisual {
     Welcome,
     TemplateCreation,
@@ -117,9 +112,9 @@ private val onboardingPages = listOf(
         title = "Настройте под себя",
         description = "Звук, голос, вибрация, тема и анимации — всё регулируется в одном месте.",
         bullets = listOf(
-            "4 профиля вибрации и 3 звука сигнала",
-            "Голосовые подсказки на системном TTS",
-            "История тренировок сохраняется автоматически"
+            "3 уровня силы вибрации и 4 паттерна на интервал",
+            "6 встроенных сигналов и свой файл с выбором фрагмента",
+            "7 вариантов анимации смены интервала"
         ),
         accent = Color(0xFFAF52DE),
         visual = OnboardingVisual.SettingsShowcase
@@ -146,13 +141,8 @@ fun OnboardingScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            // Спасает от наложения на статус-бар, вырез камеры и навигацию.
-            // Верхний бар (с «Пропустить») уезжает ниже — кнопка всегда доступна.
             .windowInsetsPadding(WindowInsets.safeDrawing)
     ) {
-        // ——— Верхний бар: шаг + «Пропустить» ———
-        // Находится ВНУТРИ Column → ничем не перекрывается,
-        // в отличие от прежней версии, где TextButton лежал под Column в Box.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -173,7 +163,6 @@ fun OnboardingScreen(
             }
         }
 
-        // ——— Прогресс-бар ———
         LinearProgressIndicator(
             progress = { progress },
             modifier = Modifier
@@ -183,7 +172,6 @@ fun OnboardingScreen(
                 .clip(RoundedCornerShape(2.dp))
         )
 
-        // ——— Содержимое страниц ———
         HorizontalPager(
             state = pagerState,
             modifier = Modifier
@@ -193,7 +181,6 @@ fun OnboardingScreen(
             OnboardingPageContent(page = onboardingPages[page])
         }
 
-        // ——— Точки-индикаторы ———
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -215,7 +202,6 @@ fun OnboardingScreen(
             }
         }
 
-        // ——— Кнопки навигации ———
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -301,7 +287,6 @@ private fun OnboardingPageContent(page: OnboardingPage) {
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Мини-список ключевых пунктов — делает страницу содержательнее.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -331,14 +316,6 @@ private fun OnboardingPageContent(page: OnboardingPage) {
     }
 }
 
-/**
- * Центральная визуализация страницы.
- *
- * Раньше здесь был просто эмодзи в кружке. Сейчас — мини-сцена из
- * Compose-примитивов, которая показывает то, о чём говорит страница:
- * карточка тренировки, чипы интервалов, таймер или список настроек.
- * Плюс лёгкая пульсация для живости.
- */
 @Composable
 private fun OnboardingVisualBox(
     visual: OnboardingVisual,
