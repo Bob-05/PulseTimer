@@ -163,18 +163,4 @@ object SpeechEngine {
         runCatching { instance?.stop() }
     }
 
-    /** Только для тестов / отладки. В проде не вызывать. */
-    fun shutdown() {
-        synchronized(lock) {
-            runCatching {
-                instance?.stop()
-                instance?.shutdown()
-            }
-            instance = null
-            ready = false
-            initializing = false
-            readyCallbacks.clear()
-            progressListener = null
-        }
-    }
 }

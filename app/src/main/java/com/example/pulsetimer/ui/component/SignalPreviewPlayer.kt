@@ -162,8 +162,16 @@ class SignalPreviewPlayer(context: Context) {
         volume: Float,
         gen: Long
     ) {
-        if (uriString == null) return
-        val uri = runCatching { Uri.parse(uriString) }.getOrNull() ?: return
+        if (uriString == null) {
+            Log.e(TAG, "Custom signal preview requested without a URI")
+            return
+        }
+        val uri = try {
+            Uri.parse(uriString)
+        } catch (error: Exception) {
+            Log.e(TAG, "Invalid custom signal URI", error)
+            return
+        }
         val safeStartMs = startMs.coerceAtLeast(0)
         val player = MediaPlayer()
         customPlayer = player
@@ -189,7 +197,11 @@ class SignalPreviewPlayer(context: Context) {
                             return@setOnSeekCompleteListener
                         }
                         runCatching { seeked.start() }
-                            .onFailure { releaseMediaPlayer(seeked) }
+                            .onFailure {
+                                Log.e(TAG, "Unable to start custom signal preview after seek", it)
+                                if (customPlayer === seeked) customPlayer = null
+                                releaseMediaPlayer(seeked)
+                            }
                         scheduleAutoStop(seeked, gen)
                     }
                     runCatching {
@@ -198,13 +210,21 @@ class SignalPreviewPlayer(context: Context) {
                         Log.w(TAG, "seekTo failed, falling back to start", it)
                         prepared.setOnSeekCompleteListener(null)
                         runCatching { prepared.start() }
-                            .onFailure { releaseMediaPlayer(prepared) }
-                        scheduleAutoStop(prepared, gen)
+                            .onFailure { error ->
+                                Log.e(TAG, "Unable to start custom signal preview", error)
+                                if (customPlayer === prepared) customPlayer = null
+                                releaseMediaPlayer(prepared)
+                            }
+                        if (customPlayer === prepared) scheduleAutoStop(prepared, gen)
                     }
                 } else {
                     runCatching { prepared.start() }
-                        .onFailure { releaseMediaPlayer(prepared) }
-                    scheduleAutoStop(prepared, gen)
+                        .onFailure { error ->
+                            Log.e(TAG, "Unable to start custom signal preview", error)
+                            if (customPlayer === prepared) customPlayer = null
+                            releaseMediaPlayer(prepared)
+                        }
+                    if (customPlayer === prepared) scheduleAutoStop(prepared, gen)
                 }
             }
             player.setOnCompletionListener { completed ->

@@ -40,6 +40,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
@@ -82,7 +83,6 @@ class TimerService : Service() {
     private var musicDuckedBySignal: Boolean = false
     private var toneGeneration: Long = 0L
 
-    // Состояние озвучки, которым управляет сервис поверх SpeechEngine.
     private var pendingSpeech: String? = null
     private var pendingSpeechIndex: Int = -1
     private var completionSpeechGeneration = 0L
@@ -317,7 +317,10 @@ class TimerService : Service() {
         val completedAt = System.currentTimeMillis()
         val duration = ((completedAt - startedAt) / 1_000L)
             .coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-        serviceScope.launch(Dispatchers.IO) {
+        activeTemplateId = null
+        // NonCancellable: insert не должен пропасть, если сервис будет
+        // уничтожен сразу после старта новой сессии.
+        serviceScope.launch(Dispatchers.IO + NonCancellable) {
             try {
                 dao.insertSessionLog(
                     SessionLogEntity(
@@ -332,7 +335,6 @@ class TimerService : Service() {
                 Log.e(TAG, "Unable to persist abandoned session", e)
             }
         }
-        activeTemplateId = null
     }
 
     private fun acquireWakeLockForRemainingSession() {
@@ -730,14 +732,6 @@ class TimerService : Service() {
         if (toneTrack === track) toneTrack = null
     }
 
-    /**
-     * Отпускает плеер пользовательского сигнала и, если музыка была приглушена
-     * под этот сигнал, возвращает ей исходную громкость.
-     *
-     * @param restoreMusic false используется в момент, когда мы собираемся
-     *   сразу запустить новый сигнал — тогда громкость восстанавливать
-     *   не нужно (иначе получим мерцание 0.5→1→0.5 за 300 мс).
-     */
     private fun releaseCustomSignalPlayer(restoreMusic: Boolean = true) {
         customSignalStopRunnable?.let(mainHandler::removeCallbacks)
         customSignalStopRunnable = null
@@ -765,8 +759,6 @@ class TimerService : Service() {
 
     private fun releasePlayerSafely() {
         cancelVolumeAnimator()
-        // Флаг сбрасываем до обнуления mediaPlayer: после обнуления
-        // восстанавливать громкость уже не на чем.
         musicDuckedBySignal = false
         val p = mediaPlayer
         mediaPlayer = null
@@ -968,14 +960,6 @@ class TimerService : Service() {
         }
     }
 
-    /**
-     * Проигрывает пользовательский сигнал длительностью не более
-     * [ToneGenerator.CUSTOM_SIGNAL_MAX_DURATION_MS] со смещением [startMs].
-     *
-     * Если файл длиннее секунды — старт начинается с выбранного в UI
-     * смещения и обрезается авто-стопом. Если короче — играет с начала
-     * и завершается сам.
-     */
     private fun playCustomSignal(
         signalUri: String?,
         volume: Float,
@@ -1077,12 +1061,6 @@ class TimerService : Service() {
         }
     }
 
-    /**
-     * Аппаратный «стоп-кран» для пользовательского сигнала.
-     * Через [ToneGenerator.CUSTOM_SIGNAL_MAX_DURATION_MS] отпускает плеер
-     * и восстанавливает громкость музыки, независимо от того, закончился
-     * ли файл.
-     */
     private fun scheduleCustomSignalAutoStop(player: MediaPlayer, generation: Long) {
         customSignalStopRunnable?.let(mainHandler::removeCallbacks)
         val runnable = Runnable {
@@ -1134,9 +1112,6 @@ class TimerService : Service() {
     private fun cancelTonePlayback() {
         toneGeneration++
         toneTrack?.let(::releaseToneTrack)
-        // Принудительно восстанавливаем музыку: сигнал прерывается
-        // (смена интервала / пауза / стоп), и она не должна остаться
-        // приглушённой.
         releaseCustomSignalPlayer(restoreMusic = true)
     }
 
@@ -1266,6 +1241,36 @@ class TimerService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        // Если сервис уничтожается, пока сессия ещё активна (не через
+        // ACTION_STOP — например, внешним stopService), сохраняем её как
+        // брошенную. Должно быть ДО serviceScope.cancel(), иначе launch
+        // не выполнится. NonCancellable гарантирует, что корутина
+        // доживёт до конца даже после отмены scope.
+        if (activeTemplateId != null) {
+            val templateId = activeTemplateId!!
+            val startedAt = sessionStartedAt
+            val workoutName = templateName
+            val completedAt = System.currentTimeMillis()
+            val duration = ((completedAt - startedAt) / 1_000L)
+                .coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+            activeTemplateId = null
+            serviceScope.launch(Dispatchers.IO + NonCancellable) {
+                try {
+                    dao.insertSessionLog(
+                        SessionLogEntity(
+                            templateId = templateId,
+                            templateName = workoutName,
+                            startedAt = startedAt,
+                            completedAt = null,
+                            totalDurationSeconds = duration
+                        )
+                    )
+                } catch (e: SQLiteException) {
+                    Log.e(TAG, "Unable to persist session on destroy", e)
+                }
+            }
+        }
+
         super.onDestroy()
         timerJob?.cancel()
         serviceScope.cancel()

@@ -5,6 +5,7 @@ import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -61,7 +62,8 @@ fun CustomSignalEditorDialog(
     signalUri: Uri,
     initialStartMs: Int,
     onSave: (startMs: Int) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onPreviewError: (String) -> Unit
 ) {
     val context = LocalContext.current
 
@@ -94,6 +96,11 @@ fun CustomSignalEditorDialog(
 
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
 
+    fun reportPreviewError(error: Throwable, message: String) {
+        Log.e(TAG, message, error)
+        onPreviewError(message)
+    }
+
     fun stopPreview() {
         val current = player
         player = null
@@ -121,26 +128,42 @@ fun CustomSignalEditorDialog(
                     prepared.setOnSeekCompleteListener { seeked ->
                         seeked.setOnSeekCompleteListener(null)
                         if (player !== seeked) return@setOnSeekCompleteListener
-                        runCatching { seeked.start() }
+                        runCatching { seeked.start() }.onFailure { error ->
+                            stopPreview()
+                            reportPreviewError(error, "Не удалось прослушать сигнал")
+                        }
                     }
                     runCatching {
                         prepared.seekTo(
                             previewStartMs.toLong(),
                             MediaPlayer.SEEK_CLOSEST
                         )
-                    }.onFailure {
+                    }.onFailure { error ->
+                        Log.w(TAG, "Unable to seek to selected preview fragment; playing from start", error)
                         prepared.setOnSeekCompleteListener(null)
-                        runCatching { prepared.start() }
+                        onPreviewError("Не удалось перейти к выбранному фрагменту; воспроизводим с начала")
+                        runCatching { prepared.start() }.onFailure { startError ->
+                            stopPreview()
+                            reportPreviewError(startError, "Не удалось прослушать сигнал")
+                        }
                     }
                 } else {
-                    runCatching { prepared.start() }
+                    runCatching { prepared.start() }.onFailure { error ->
+                        stopPreview()
+                        reportPreviewError(error, "Не удалось прослушать сигнал")
+                    }
                 }
             }
             newPlayer.setOnCompletionListener { stopPreview() }
-            newPlayer.setOnErrorListener { _, _, _ -> stopPreview(); true }
+            newPlayer.setOnErrorListener { _, what, extra ->
+                stopPreview()
+                onPreviewError("Ошибка воспроизведения сигнала ($what, $extra)")
+                true
+            }
             newPlayer.prepareAsync()
-        } catch (_: Exception) {
+        } catch (error: Exception) {
             stopPreview()
+            reportPreviewError(error, "Не удалось открыть выбранный аудиофайл")
         }
     }
 
@@ -250,3 +273,5 @@ private fun readAudioDurationMs(context: Context, uri: Uri): Int? = runCatching 
 
 private fun formatMs(ms: Int): String =
     String.format(Locale.getDefault(), "%.1f с", ms / 1000f)
+
+private const val TAG = "CustomSignalEditor"

@@ -655,6 +655,9 @@ fun SettingsScreen(
                     releasePersistedUri(context, pending.uri.toString(), keep = null)
                 }
                 pendingSignal = null
+            },
+            onPreviewError = { message ->
+                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
             }
         )
     }

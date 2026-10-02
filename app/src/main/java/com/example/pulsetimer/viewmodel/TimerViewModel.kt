@@ -19,7 +19,6 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import com.pulsetimer.util.ToneGenerator
 
 class TimerViewModel(application: Application) : AndroidViewModel(application) {
 

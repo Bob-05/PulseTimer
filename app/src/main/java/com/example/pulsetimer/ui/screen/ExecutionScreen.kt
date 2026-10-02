@@ -126,8 +126,6 @@ fun ExecutionScreen(
         }
     }
 
-    // Defensive: если сервис не поднял состояние за 6 секунд —
-    // показываем экран ошибки вместо бесконечного спиннера.
     var timedOut by remember(templateId) { mutableStateOf(false) }
     LaunchedEffect(templateId, timerState.templateId, timerState.totalIntervals, timerState.isFinished) {
         timedOut = false
@@ -196,10 +194,6 @@ fun ExecutionScreen(
         return
     }
 
-    // Status Bar в тон фазы.
-    // Activity достаём через безопасное разворачивание ContextWrapper — это надёжнее,
-    // чем `view.context as? Activity`, который может вернуть null в ComposeView
-    // / AbstractComposeView / Preview, где контекст обёрнут.
     val view = LocalView.current
     val activity = remember(view) { view.context.findActivity() }
     DisposableEffect(activity, view) {
@@ -214,7 +208,10 @@ fun ExecutionScreen(
             }
         }
     }
-    val currentPhaseColor = parseColor(timerState.currentIntervalColor)
+    // parseColor: hex → Color. Не пересчитываем при каждой смене секунды.
+    val currentPhaseColor = remember(timerState.currentIntervalColor) {
+        parseColor(timerState.currentIntervalColor)
+    }
     LaunchedEffect(currentPhaseColor, activity, view) {
         val window = activity?.window ?: return@LaunchedEffect
         window.statusBarColor = currentPhaseColor.toArgb()
@@ -222,7 +219,6 @@ fun ExecutionScreen(
             currentPhaseColor.luminance() > 0.55f
     }
 
-    // Порог свайпа в dp, а не в «сырых» пикселях
     val density = LocalDensity.current
     val swipeThresholdPx = with(density) { 56.dp.toPx() }
 
@@ -291,11 +287,6 @@ fun ExecutionScreen(
     }
 }
 
-/**
- * Безопасное разворачивание ContextWrapper → Activity.
- * Возвращает null, если цепочка не содержит Activity (Compose Preview,
- * ComposeView внутри не-Activity контекста и т.п.).
- */
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.findActivity()
@@ -433,10 +424,6 @@ private data class PhaseKey(
     val backgroundValue: String
 )
 
-/**
- * Анимации переходов. SLIDE (по умолчанию) — это «карточки на весь экран»:
- * чистый горизонтальный слайд + лёгкий scale уходящей, без fade.
- */
 private fun phaseTransition(animation: String, direction: Int): ContentTransform {
     val slideSpec = tween<IntOffset>(
         durationMillis = 380,
@@ -507,7 +494,9 @@ private fun PhaseFullScreen(
     onSkip: () -> Unit,
     onPrevious: () -> Unit
 ) {
-    val phaseColor = parseColor(phase.colorHex)
+    // parseColor не должен пересчитываться раз в секунду вместе с timeRemaining.
+    val phaseColor = remember(phase.colorHex) { parseColor(phase.colorHex) }
+
     val entryProgress = remember(phase.index) {
         Animatable(if (animateInitialEntry) 0f else 1f)
     }
@@ -523,15 +512,14 @@ private fun PhaseFullScreen(
         }
     }
 
-    // Ширина контейнера в dp. LocalWindowInfo.current.containerSize даёт размер
-    // в пикселях — переводим в dp через LocalDensity. Это корректнее, чем
-    // LocalConfiguration.current.screenWidthDp: учитывает multi-window,
-    // складные экраны и изменения размера окна.
     val density = LocalDensity.current
     val containerWidthPx = LocalWindowInfo.current.containerSize.width
     val screenWidthDp = with(density) { containerWidthPx.toDp().value }
 
-    val timerFontSize = ((screenWidthDp - 48f) / 3.6f).coerceIn(56f, 120f).sp
+    // Размер шрифта зависит только от ширины контейнера — запоминаем.
+    val timerFontSize = remember(screenWidthDp) {
+        ((screenWidthDp - 48f) / 3.6f).coerceIn(56f, 120f).sp
+    }
     val canGoPrevious = phase.index > 0
 
     Box(modifier = Modifier.fillMaxSize()) {
