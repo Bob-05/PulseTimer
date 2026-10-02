@@ -1,6 +1,8 @@
 package com.pulsetimer.ui.screen
 
 import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaPlayer
@@ -112,7 +114,7 @@ fun ExecutionScreen(
 
     val isFinished = timerState.isFinished && timerState.templateId == templateId
     val isReady = timerState.templateId == templateId &&
-        (timerState.totalIntervals > 0 || isFinished)
+            (timerState.totalIntervals > 0 || isFinished)
     var initialEntryCompleted by remember(templateId) { mutableStateOf(false) }
 
     LaunchedEffect(templateId, isReady, isFinished) {
@@ -194,10 +196,13 @@ fun ExecutionScreen(
         return
     }
 
-    // Status Bar в тон фазы
+    // Status Bar в тон фазы.
+    // Activity достаём через безопасное разворачивание ContextWrapper — это надёжнее,
+    // чем `view.context as? Activity`, который может вернуть null в ComposeView
+    // / AbstractComposeView / Preview, где контекст обёрнут.
     val view = LocalView.current
-    val activity = view.context as? Activity
-    DisposableEffect(Unit) {
+    val activity = remember(view) { view.context.findActivity() }
+    DisposableEffect(activity, view) {
         val window = activity?.window
         val previousColor = window?.statusBarColor
         val controller = window?.let { WindowCompat.getInsetsController(it, view) }
@@ -210,7 +215,7 @@ fun ExecutionScreen(
         }
     }
     val currentPhaseColor = parseColor(timerState.currentIntervalColor)
-    LaunchedEffect(currentPhaseColor) {
+    LaunchedEffect(currentPhaseColor, activity, view) {
         val window = activity?.window ?: return@LaunchedEffect
         window.statusBarColor = currentPhaseColor.toArgb()
         WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars =
@@ -284,6 +289,17 @@ fun ExecutionScreen(
             )
         }
     }
+}
+
+/**
+ * Безопасное разворачивание ContextWrapper → Activity.
+ * Возвращает null, если цепочка не содержит Activity (Compose Preview,
+ * ComposeView внутри не-Activity контекста и т.п.).
+ */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
 
 @Composable

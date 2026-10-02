@@ -124,6 +124,7 @@ fun EditorScreen(
         }
     }
 
+    // ----- Пикеры уровня шаблона (фон / видео / музыка) -----
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             try {
@@ -169,6 +170,68 @@ fun EditorScreen(
             } catch (error: SecurityException) {
                 Toast.makeText(context, "Не удалось сохранить доступ к аудиофайлу", Toast.LENGTH_LONG).show()
             }
+        }
+    }
+
+    // ----- Пикеры уровня интервала: ОДИН launcher на тип -----
+    // Раньше каждый IntervalItem держал по 3 собственных launcher'а. В LazyColumn
+    // это давало регистрацию/дерегистрацию в ActivityResultRegistry на каждый
+    // скролл-кадр. Теперь launcher'ы живут на уровне экрана, а целевой interval
+    // передаётся через pending-id.
+    var pendingImageIntervalId by remember { mutableStateOf<Long?>(null) }
+    var pendingVideoIntervalId by remember { mutableStateOf<Long?>(null) }
+    var pendingAudioIntervalId by remember { mutableStateOf<Long?>(null) }
+
+    val intervalImagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val intervalId = pendingImageIntervalId
+        pendingImageIntervalId = null
+        if (uri == null || intervalId == null) return@rememberLauncherForActivityResult
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+            intervals.firstOrNull { it.id == intervalId }?.let { interval ->
+                viewModel.updateInterval(
+                    interval.copy(backgroundType = "CUSTOM_IMAGE", backgroundValue = uri.toString())
+                )
+            }
+        } catch (error: SecurityException) {
+            Toast.makeText(context, "Не удалось сохранить доступ к изображению", Toast.LENGTH_LONG).show()
+        }
+    }
+    val intervalVideoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val intervalId = pendingVideoIntervalId
+        pendingVideoIntervalId = null
+        if (uri == null || intervalId == null) return@rememberLauncherForActivityResult
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+            intervals.firstOrNull { it.id == intervalId }?.let { interval ->
+                viewModel.updateInterval(
+                    interval.copy(backgroundType = "VIDEO", backgroundValue = uri.toString())
+                )
+            }
+        } catch (error: SecurityException) {
+            Toast.makeText(context, "Не удалось сохранить доступ к видео", Toast.LENGTH_LONG).show()
+        }
+    }
+    val intervalAudioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val intervalId = pendingAudioIntervalId
+        pendingAudioIntervalId = null
+        if (uri == null || intervalId == null) return@rememberLauncherForActivityResult
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+            intervals.firstOrNull { it.id == intervalId }?.let { interval ->
+                viewModel.updateInterval(interval.copy(audioUri = uri.toString()))
+            }
+        } catch (error: SecurityException) {
+            Toast.makeText(context, "Не удалось сохранить доступ к аудиофайлу", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -354,6 +417,8 @@ fun EditorScreen(
                 }
             } else {
                 itemsIndexed(intervals, key = { _, interval -> interval.id }) { index, interval ->
+                    // Читается ТОЛЬКО внутри graphicsLayer {} — layout/draw-phase,
+                    // не composition. Ре-композиции при скролле нет.
                     val itemDistance by remember(interval.id, intervalsListState) {
                         derivedStateOf {
                             val layout = intervalsListState.layoutInfo
@@ -383,6 +448,18 @@ fun EditorScreen(
                             viewModel.moveInterval(templateId, interval.id, 1)
                         },
                         onUpdate = viewModel::updateInterval,
+                        onPickImage = {
+                            pendingImageIntervalId = interval.id
+                            intervalImagePicker.launch(arrayOf("image/*"))
+                        },
+                        onPickVideo = {
+                            pendingVideoIntervalId = interval.id
+                            intervalVideoPicker.launch(arrayOf("video/*"))
+                        },
+                        onPickAudio = {
+                            pendingAudioIntervalId = interval.id
+                            intervalAudioPicker.launch(arrayOf("audio/*"))
+                        },
                         modifier = Modifier
                             .animateItem()
                             .graphicsLayer {
@@ -435,52 +512,14 @@ fun IntervalItem(
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onUpdate: (IntervalEntity) -> Unit,
+    onPickImage: () -> Unit,
+    onPickVideo: () -> Unit,
+    onPickAudio: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
     val accent = parseColor(interval.colorHex)
     val surface = MaterialTheme.colorScheme.surface
     val shape = RoundedCornerShape(22.dp)
-
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            try {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-                onUpdate(interval.copy(backgroundType = "CUSTOM_IMAGE", backgroundValue = uri.toString()))
-            } catch (error: SecurityException) {
-                Toast.makeText(context, "Не удалось сохранить доступ к изображению", Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-    val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            try {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-                onUpdate(interval.copy(backgroundType = "VIDEO", backgroundValue = uri.toString()))
-            } catch (error: SecurityException) {
-                Toast.makeText(context, "Не удалось сохранить доступ к видео", Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-    val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            try {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-                onUpdate(interval.copy(audioUri = uri.toString()))
-            } catch (error: SecurityException) {
-                Toast.makeText(context, "Не удалось сохранить доступ к аудиофайлу", Toast.LENGTH_LONG).show()
-            }
-        }
-    }
 
     // ⚠️ Без Card и без shadow: Material 3 Card рисует резкую spot-shadow,
     // которая на Android 12+ оставляет прямоугольный «хвост» под скруглённой формой.
@@ -587,7 +626,7 @@ fun IntervalItem(
                 }
             }
             androidx.compose.material3.OutlinedButton(
-                onClick = { imagePicker.launch(arrayOf("image/*")) },
+                onClick = onPickImage,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
@@ -603,7 +642,7 @@ fun IntervalItem(
                 ) { Text("Сбросить изображение") }
             }
             androidx.compose.material3.OutlinedButton(
-                onClick = { videoPicker.launch(arrayOf("video/*")) },
+                onClick = onPickVideo,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
@@ -619,7 +658,7 @@ fun IntervalItem(
                 ) { Text("Сбросить видеофон") }
             }
             androidx.compose.material3.OutlinedButton(
-                onClick = { audioPicker.launch(arrayOf("audio/*")) },
+                onClick = onPickAudio,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(

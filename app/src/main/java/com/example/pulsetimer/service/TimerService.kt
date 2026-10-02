@@ -34,9 +34,9 @@ import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.data.database.AppDatabase
 import com.pulsetimer.data.entity.IntervalEntity
 import com.pulsetimer.data.entity.SessionLogEntity
+import com.pulsetimer.speech.SpeechEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -50,11 +50,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.PI
 import kotlin.math.exp
 import kotlin.math.sin
-import java.util.Locale
 
 class TimerService : Service() {
 
@@ -84,9 +82,7 @@ class TimerService : Service() {
     private var customSignalPlayer: MediaPlayer? = null
     private var toneGeneration: Long = 0L
 
-    private var textToSpeech: TextToSpeech? = null
-    private var textToSpeechReady = false
-    private val textToSpeechInitialization = CompletableDeferred<Boolean>()
+    // Состояние озвучки, которым управляет сервис поверх SpeechEngine.
     private var pendingSpeech: String? = null
     private var pendingSpeechIndex: Int = -1
     private var completionSpeechGeneration = 0L
@@ -111,7 +107,6 @@ class TimerService : Service() {
 
     companion object {
         private const val TAG = "TimerService"
-        private const val TTS_STARTUP_WAIT_MILLIS = 2_000L
         const val CHANNEL_ID = "pulse_timer_channel"
         const val NOTIFICATION_ID = 1
 
@@ -158,65 +153,29 @@ class TimerService : Service() {
         )
         wakeLock?.setReferenceCounted(false)
         AppSettingsStore.initialize(this)
-        textToSpeech = TextToSpeech(this) { status ->
-            val initialized = status == TextToSpeech.SUCCESS
-            if (initialized) {
-                textToSpeech?.language = Locale.getDefault()
-                textToSpeech?.setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build()
-                )
-                textToSpeech?.setOnUtteranceProgressListener(
-                    object : UtteranceProgressListener() {
-                        override fun onStart(utteranceId: String?) = Unit
 
-                        override fun onDone(utteranceId: String?) {
-                            utteranceId?.let { id ->
-                                mainHandler.post { onCompletionSpeechFinished(id) }
-                            }
-                        }
+        // Прогреваем TTS заранее — только если голос реально включён.
+        // Если MainActivity уже прогрела движок, это no-op.
+        if (AppSettingsStore.settings.value.voiceEnabled) {
+            SpeechEngine.warmUp(this)
+        }
+        SpeechEngine.setUtteranceProgressListener(
+            object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) = Unit
 
-                        override fun onError(utteranceId: String?) {
-                            utteranceId?.let { id ->
-                                mainHandler.post { onCompletionSpeechFinished(id) }
-                            }
-                        }
-                    }
-                )
-                textToSpeechReady = true
-                if (completionSpeechPending) {
-                    speakWorkoutCompletion()
-                } else {
-                    pendingSpeech?.let { speech ->
-                        if (AppSettingsStore.settings.value.voiceEnabled &&
-                            activeTemplateId != null &&
-                            !isPaused &&
-                            pendingSpeechIndex == currentIndex
-                        ) {
-                            textToSpeech?.speak(
-                                speech,
-                                TextToSpeech.QUEUE_FLUSH,
-                                null,
-                                "interval-$currentIndex"
-                            )
-                        }
-                        pendingSpeech = null
-                        pendingSpeechIndex = -1
+                override fun onDone(utteranceId: String?) {
+                    utteranceId?.let { id ->
+                        mainHandler.post { onCompletionSpeechFinished(id) }
                     }
                 }
-            } else {
-                textToSpeechReady = false
-                Log.e(TAG, "TextToSpeech initialization failed: $status")
-                if (completionSpeechPending) {
-                    completionSpeechPending = false
-                    completionSpeechFinished = true
-                    finishWorkoutIfReady()
+
+                override fun onError(utteranceId: String?) {
+                    utteranceId?.let { id ->
+                        mainHandler.post { onCompletionSpeechFinished(id) }
+                    }
                 }
             }
-            textToSpeechInitialization.complete(initialized)
-        }
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -287,7 +246,7 @@ class TimerService : Service() {
         cancelVolumeAnimator()
         pendingSpeech = null
         pendingSpeechIndex = -1
-        textToSpeech?.stop()
+        SpeechEngine.stop()
         cancelTonePlayback()
         requestedAudioUri = null
         playingAudioUri = null
@@ -329,15 +288,9 @@ class TimerService : Service() {
                 return@launch
             }
 
-            if (AppSettingsStore.settings.value.voiceEnabled && !textToSpeechReady) {
-                val initialized = withTimeoutOrNull(TTS_STARTUP_WAIT_MILLIS) {
-                    textToSpeechInitialization.await()
-                }
-                if (initialized != true) {
-                    Log.w(TAG, "TextToSpeech was not ready before workout start")
-                }
-            }
-
+            // Раньше здесь было блокирующее ожидание TTS до 2 с. Теперь
+            // тренировка стартует мгновенно, а первая фраза «догоняет» через
+            // SpeechEngine.onReady в speakInterval().
             templateAudioUri = template.audioUri
             templateBackgroundType = template.backgroundType
             templateBackgroundValue = template.backgroundValue
@@ -389,9 +342,9 @@ class TimerService : Service() {
 
     private fun acquireWakeLockForRemainingSession() {
         val remainingSeconds = timeRemaining.toLong() +
-            intervals.drop(currentIndex + 1).sumOf {
-                it.durationSeconds.coerceAtLeast(0).toLong()
-            }
+                intervals.drop(currentIndex + 1).sumOf {
+                    it.durationSeconds.coerceAtLeast(0).toLong()
+                }
         wakeLock?.acquire((remainingSeconds + 60L) * 1_000L)
     }
 
@@ -448,11 +401,11 @@ class TimerService : Service() {
         timerJob = null
         pendingSpeech = null
         pendingSpeechIndex = -1
-        textToSpeech?.stop()
+        SpeechEngine.stop()
         cancelTonePlayback()
         if (intervalDeadlineElapsedRealtime > 0L) {
             timeRemaining = ((intervalDeadlineElapsedRealtime - SystemClock.elapsedRealtime() + 999L) /
-                1_000L).coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                    1_000L).coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         }
         cancelVolumeAnimator()
         mediaPlayer.safeSetVolume(AppSettingsStore.settings.value.soundVolume)
@@ -529,7 +482,6 @@ class TimerService : Service() {
     }
 
     private fun previousInterval() {
-        // На первом интервале возвращаться некуда
         if (activeTemplateId == null || currentIndex <= 0) return
         timerJob?.cancel()
         timerJob = null
@@ -1138,18 +1090,52 @@ class TimerService : Service() {
         releaseCustomSignalPlayer()
     }
 
+    /**
+     * Озвучка имени интервала. Если движок ещё не готов — запоминаем текст
+     * и просим SpeechEngine разбудить нас, когда он поднимется.
+     *
+     * ВАЖНО: если сервис будет уничтожен до готовности TTS, колбэк
+     * удерживается SpeechEngine. onDestroy обязан вызвать
+     * SpeechEngine.clearPendingCallbacks() — иначе утечка памяти.
+     */
     private fun speakInterval(name: String) {
         if (!AppSettingsStore.settings.value.voiceEnabled) return
         val phaseIndex = currentIndex
-        mainHandler.post {
-            if (activeTemplateId == null || currentIndex != phaseIndex || isPaused) return@post
-            if (textToSpeechReady) {
-                textToSpeech?.speak(name, TextToSpeech.QUEUE_FLUSH, null, "interval-$currentIndex")
+        serviceScope.launch {
+            if (activeTemplateId == null || currentIndex != phaseIndex || isPaused) return@launch
+            if (SpeechEngine.isReady()) {
+                SpeechEngine.speak(name, TextToSpeech.QUEUE_FLUSH, "interval-$currentIndex")
             } else {
                 pendingSpeech = name
                 pendingSpeechIndex = phaseIndex
+                SpeechEngine.onReady { success ->
+                    serviceScope.launch { flushPendingSpeech(success) }
+                }
             }
         }
+    }
+
+    private fun flushPendingSpeech(success: Boolean) {
+        if (!success) {
+            pendingSpeech = null
+            pendingSpeechIndex = -1
+            return
+        }
+        // Завершение тренировки имеет приоритет над именем интервала.
+        if (completionSpeechPending) return
+        val speech = pendingSpeech ?: return
+        if (!AppSettingsStore.settings.value.voiceEnabled ||
+            activeTemplateId == null ||
+            currentIndex != pendingSpeechIndex ||
+            isPaused
+        ) {
+            pendingSpeech = null
+            pendingSpeechIndex = -1
+            return
+        }
+        SpeechEngine.speak(speech, TextToSpeech.QUEUE_FLUSH, "interval-$currentIndex")
+        pendingSpeech = null
+        pendingSpeechIndex = -1
     }
 
     private fun speakCountdown(secondsRemaining: Int) {
@@ -1159,22 +1145,39 @@ class TimerService : Service() {
         }
         val phaseIndex = currentIndex
         mainHandler.post {
-            if (textToSpeechReady && !isPaused && currentIndex == phaseIndex) {
-                textToSpeech?.speak(word, TextToSpeech.QUEUE_ADD, null, "countdown-$currentIndex-$secondsRemaining")
+            if (SpeechEngine.isReady() && !isPaused && currentIndex == phaseIndex) {
+                SpeechEngine.speak(word, TextToSpeech.QUEUE_ADD, "countdown-$currentIndex-$secondsRemaining")
             }
         }
     }
 
     private fun speakWorkoutCompletion() {
-        if (!completionSpeechPending || !textToSpeechReady) return
+        if (!completionSpeechPending) return
         val utteranceId = "workout-complete-$completionSpeechGeneration"
         completionUtteranceId = utteranceId
-        val result = textToSpeech?.speak(
+        if (SpeechEngine.isReady()) {
+            deliverCompletionSpeech(utteranceId)
+        } else {
+            SpeechEngine.onReady { success ->
+                serviceScope.launch {
+                    if (completionUtteranceId != utteranceId) return@launch
+                    if (!success) {
+                        onCompletionSpeechFinished(utteranceId)
+                    } else if (completionSpeechPending) {
+                        deliverCompletionSpeech(utteranceId)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun deliverCompletionSpeech(utteranceId: String) {
+        if (completionUtteranceId != utteranceId) return
+        val result = SpeechEngine.speak(
             "Тренировка завершена",
             TextToSpeech.QUEUE_FLUSH,
-            null,
             utteranceId
-        ) ?: TextToSpeech.ERROR
+        )
         if (result == TextToSpeech.ERROR) {
             Log.e(TAG, "Unable to speak workout completion")
             onCompletionSpeechFinished(utteranceId)
@@ -1207,12 +1210,9 @@ class TimerService : Service() {
             toneTrack?.let(::releaseToneTrack)
             releaseCustomSignalPlayer()
             if (!keepTextToSpeech) {
-                runCatching {
-                    textToSpeech?.stop()
-                    textToSpeech?.shutdown()
-                }
-                textToSpeech = null
-                textToSpeechReady = false
+                // SpeechEngine живёт уровнем выше сервиса — глушим только
+                // текущую реплику, а не сам движок.
+                SpeechEngine.stop()
             }
             audioFocusRequest?.let { runCatching { audioManager.abandonAudioFocusRequest(it) } }
             audioFocusRequest = null
@@ -1232,5 +1232,9 @@ class TimerService : Service() {
         serviceScope.cancel()
         if (wakeLock?.isHeld == true) wakeLock?.release()
         releaseMediaResources()
+        // Снимаем listener и сбрасываем pending-колбэки, чтобы SpeechEngine
+        // не держал ссылку на уничтоженный сервис (иначе — утечка памяти).
+        SpeechEngine.setUtteranceProgressListener(null)
+        SpeechEngine.clearPendingCallbacks()
     }
 }

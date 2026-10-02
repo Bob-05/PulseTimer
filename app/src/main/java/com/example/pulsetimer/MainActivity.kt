@@ -37,6 +37,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.pulsetimer.data.AppSettingsStore
+import com.pulsetimer.speech.SpeechEngine
 import com.pulsetimer.ui.navigation.Screen
 import com.pulsetimer.ui.screen.EditorScreen
 import com.pulsetimer.ui.screen.ExecutionScreen
@@ -65,6 +66,11 @@ class MainActivity : ComponentActivity() {
         ) ?: false
         enableEdgeToEdge()
         AppSettingsStore.initialize(this)
+        // Прогреваем TTS заранее, пока пользователь ходит по экранам —
+        // тогда старт тренировки не ждёт инициализации движка.
+        if (AppSettingsStore.settings.value.voiceEnabled) {
+            SpeechEngine.warmUp(this)
+        }
         setContent {
             // saveable — при повороте экрана анимация появления не повторяется.
             var showAppContent by rememberSaveable { mutableStateOf(false) }
@@ -134,6 +140,14 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(settings.legalConsentAccepted) {
                 if (settings.legalConsentAccepted) {
                     requestNotificationPermissionIfNeeded()
+                }
+            }
+
+            // Если пользователь включил голос уже после старта процесса —
+            // догреваем TTS на лету.
+            LaunchedEffect(settings.voiceEnabled) {
+                if (settings.voiceEnabled) {
+                    SpeechEngine.warmUp(this@MainActivity)
                 }
             }
 
