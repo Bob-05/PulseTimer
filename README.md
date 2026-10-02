@@ -39,13 +39,13 @@
 - **Интервалы** — работа / отдых / произвольные фазы с индивидуальной длительностью, цветом, эмодзи
 - **Фоновые изображения и видео** — для каждого интервала или для всей тренировки
 - **Своя музыка** — для интервала или общая фоновая
-- **Звуковые сигналы** — три тембра: зуммер, свисток, гонг
+- **Звуковые сигналы** — 6 встроенных тембров (зуммер, свисток, гонг, двойной импульс, цифровой, колокольчик) и **свой сигнал** из аудиофайла с выбором фрагмента (начало и длительность до 1 сек)
 - **Голосовые подсказки** — системный TTS объявляет названия интервалов и отсчёт 3–2–1
 - **Вибрация** — 4 профиля: выкл, стандартный, интенсивный, нарастающий
 - **Работа в фоне** — foreground-сервис с уведомлением, таймер идёт даже при выключенном экране
 - **История тренировок** — сохраняется автоматически
 - **Темы** — светлая, OLED, серая
-- **Настройка анимаций** — 5 типов переходов между интервалами
+- **Анимация смены интервалов** — 7 типов переходов: слайд, затухание, масштаб, скольжение, отскок, глубина, пружинный подъём
 - **Обучение при первом запуске** — 5 страниц с прогресс-баром, мини-визуализациями и навигацией «Назад / Далее»
 - **Просмотр документов в приложении** — Политика и Соглашение открываются во встроенном просмотрщике; помимо этого доступна кнопка «Открыть на GitHub»
 
@@ -82,41 +82,57 @@ APK появится в `app/build/outputs/apk/debug/app-debug.apk`.
 
 Для релизной сборки — `./gradlew assembleRelease` (потребуется настроить подпись в `build.gradle.kts` или через Android Studio → Build → Generate Signed Bundle / APK).
 
-`PRIVACY_POLICY.md` и `TERMS_OF_USE.md` автоматически копируются в assets при сборке (задача `copyLegalDocs`). Дублировать их вручную не нужно.
+Задача `copyLegalDocs` копирует `PRIVACY_POLICY.md` и `TERMS_OF_USE.md` в `app/build/generated/legalAssets/legal/`. Gradle подключает этот сгенерированный каталог как источник assets при сборке; вручную копировать документы в `src/main/assets/` не нужно.
 
 ## Структура проекта
 
 ```
 app/src/main/java/com/pulsetimer/
-├── MainActivity.kt              # Хост навигации + запрос POST_NOTIFICATIONS
+├── MainActivity.kt                    # Хост навигации, запрос POST_NOTIFICATIONS,
+│                                      # прогрев TTS, анимация запуска
 ├── data/
-│   ├── AppSettings.kt           # Хранилище настроек (SharedPreferences)
-│   ├── dao/TimerDao.kt          # Room DAO
-│   ├── database/AppDatabase.kt  # Room БД + миграции + предзаполнение
-│   └── entity/                  # TemplateEntity, IntervalEntity, SessionLogEntity
+│   ├── AppSettings.kt                 # Хранилище настроек (SharedPreferences)
+│   ├── dao/TimerDao.kt                # Room DAO
+│   ├── database/AppDatabase.kt        # Room БД + миграции + предзаполнение
+│   └── entity/                        # TemplateEntity, IntervalEntity, SessionLogEntity
 ├── service/
-│   └── TimerService.kt          # Foreground-сервис таймера
+│   └── TimerService.kt                # Foreground-сервис таймера
+├── speech/
+│   └── SpeechEngine.kt                # Синглтон TextToSpeech на весь процесс
 ├── ui/
+│   ├── component/
+│   │   ├── CustomSignalEditorDialog.kt  # Диалог выбора фрагмента сигнала
+│   │   └── SignalPreviewPlayer.kt       # Превью сигналов в настройках
 │   ├── navigation/Screen.kt
-│   ├── screen/                  # LegalConsent, LegalDocument, Onboarding,
-│   │                            # Main, Execution, Editor, Settings,
-│   │                            # WorkoutEmojiPicker
-│   └── theme/                   # Color.kt, Theme.kt, Type.kt
+│   ├── screen/                        # LegalConsent, LegalDocument, LaunchAnimation,
+│   │                                  # Onboarding, Main, Execution, Editor,
+│   │                                  # Settings, WorkoutEmojiPicker
+│   └── theme/                         # Theme.kt, Type.kt
 ├── util/
-│   └── MarkdownRenderer.kt      # Markdown → HTML для встроенного просмотрщика
+│   ├── MarkdownRenderer.kt            # Markdown → HTML для встроенного просмотрщика
+│   └── ToneGenerator.kt               # Генерация PCM-сигналов
 └── viewmodel/
-    └── TimerViewModel.kt        # Связь UI ↔ БД ↔ сервис
+    └── TimerViewModel.kt              # Связь UI ↔ БД ↔ сервис
 ```
 
 ```
 app/src/main/res/
+├── drawable/
+│   ├── ic_launcher_background.xml
+│   ├── ic_launcher_foreground.xml
+│   ├── ic_launcher_monochrome.xml
+│   └── ic_splash.xml
+├── mipmap-anydpi-v26/
+│   ├── ic_launcher.xml
+│   └── ic_launcher_round.xml
+├── mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}/
+│   ├── ic_launcher.webp
+│   └── ic_launcher_round.webp
 ├── xml/
 │   └── data_extraction_rules.xml   # Запрет backup и device transfer на Android 12+
 ├── values/
-│   ├── colors.xml                  # (только шаблонные цвета, не используются)
 │   ├── strings.xml
 │   └── themes.xml
-└── mipmap-*/                       # Иконки приложения
 ```
 
 ## Разрешения
@@ -137,7 +153,7 @@ app/src/main/res/
 |---|---|---|
 | `POST_NOTIFICATIONS` | После принятия экрана согласия (Android 13+) | Нет карточки таймера в шторке, сервис работает |
 
-Разрешение на доступ к файлам напрямую не запрашивается — используется SAF (`ActivityResultContracts.OpenDocument`), выдающий URI-доступ per-file. Через `takePersistableUriPermission` доступ сохраняется между запусками.
+Разрешения на чтение/запись внешнего хранилища (`READ_EXTERNAL_STORAGE`, `READ_MEDIA_*` и др.) **не запрашиваются**. Доступ к выбранным пользователем файлам (изображение, видео, аудио) осуществляется через SAF (`ActivityResultContracts.OpenDocument`) — системный диалог выбора файла, выдающий URI-доступ per-file. Через `takePersistableUriPermission` доступ сохраняется между запусками. Приложение не сканирует хранилище и не получает доступ к файлам за пределами явно выбранных пользователем.
 
 ### Foreground Service
 
@@ -170,7 +186,8 @@ app/src/main/res/
 ┌───────────────────────────────────────────────────┐
 │  UI Layer (Compose)                               │
 │  LegalConsentScreen, LegalDocumentScreen,         │
-│  OnboardingScreen, MainScreen, ExecutionScreen,   │
+│  LaunchAnimationScreen, OnboardingScreen,         │
+│  MainScreen, ExecutionScreen,                     │
 │  EditorScreen, SettingsScreen                     │
 └───────────────────┬───────────────────────────────┘
                     │ StateFlow / collectAsState
@@ -187,10 +204,17 @@ app/src/main/res/
 │   intervals,        │        │  - audio / TTS     │
 │   session_logs)     │        │  - vibrator        │
 └─────────────────────┘        │  - wake lock       │
+                               └─────────┬──────────┘
+                                         │
+                               ┌─────────▼──────────┐
+                               │  SpeechEngine      │
+                               │  (singleton TTS)   │
                                └────────────────────┘
 ```
 
 `TimerService` не привязан через `bindService`. Состояние передаётся через статический `MutableStateFlow` в `companion object`. UI подписывается на него, сервис обновляет. Состояние живёт до смерти процесса.
+
+`SpeechEngine` — синглтон на весь процесс: `MainActivity` прогревает TTS заранее, `TimerService` переиспользует готовый инстанс.
 
 ---
 
@@ -253,6 +277,8 @@ app/src/main/res/
 | voiceEnabled | Boolean | true |
 | soundVolume | Float | 0.8 |
 | toneType | String | CLASSIC |
+| customSignalUri | String? | null |
+| customSignalStartMs | Int | 0 |
 | vibrationEnabled | Boolean | true |
 | vibrationProfile | String | SPORT |
 | theme | String | OLED |
@@ -268,12 +294,12 @@ app/src/main/res/
 
 ### Жизненный цикл
 
-1. `onCreate()` — создаёт канал уведомлений, `WakeLock`, инициализирует `TextToSpeech`.
+1. `onCreate()` — создаёт канал уведомлений, `WakeLock`, прогревает `SpeechEngine` (если голос включён).
 2. `onStartCommand(intent)` — обрабатывает ACTION. Первое, что делает: `startForeground(...)` (обязательно в течение 5 секунд).
 3. `startTimer(templateId)` — параллельно грузит `template` и `intervals` из Room (`async/await`), запускает первый интервал.
 4. `runInterval()` запускает общий цикл `startCountdownLoop()` для отсчёта времени. Последние 3 секунды интервала: тон + вибрация + TTS.
 5. При завершении всех интервалов → `finishWorkout()` → запись в `session_logs` → `stopForeground` + `stopSelf`.
-6. `onDestroy()` — отменяет `CoroutineScope`, релизит `WakeLock`, `MediaPlayer`, `AudioTrack`, `TTS`.
+6. `onDestroy()` — сохраняет активную (не завершённую) сессию как брошенную, отменяет `CoroutineScope`, релизит `WakeLock`, `MediaPlayer`, `AudioTrack`, снимает listener с `SpeechEngine`.
 
 ### Управление
 
@@ -290,9 +316,9 @@ app/src/main/res/
 
 ### Аудио
 
-- **Сигналы** — синтезируются в `AudioTrack` (PCM 16-bit, 44.1 kHz, моно). Три волновые формы: синус (880 Гц), свисток (частота растёт 1400→2200 Гц), гонг (сумма 420 + 630 + 1050 Гц с decay).
+- **Сигналы** — синтезируются в `AudioTrack` (PCM 16-bit, 44.1 kHz, моно). Встроенные тембры: зуммер (880 Гц), свисток (частота растёт 1400→2200 Гц), гонг (сумма 420 + 630 + 1050 Гц с decay), двойной импульс, цифровой сигнал (три ноты), колокольчик. **Свой сигнал** — воспроизводится через `MediaPlayer` с `seekTo` на выбранный фрагмент и авто-стопом на 1 сек.
 - **Музыка** — `MediaPlayer`, зацикливается, громкость из настроек. При сигнале громкость временно снижается до 0.5 и возвращается.
-- **TTS** — системный движок, locale из системы. Если `voiceEnabled = false` — не вызывается. У некоторых вендоров TTS может работать через облако (см. Политику, п. 5.1).
+- **TTS** — системный движок, locale из системы. Работает через общий `SpeechEngine`. Если `voiceEnabled = false` — не вызывается. У некоторых вендоров TTS может работать через облако (см. Политику, п. 5.1).
 
 ### Вибрация
 
@@ -328,7 +354,7 @@ LegalConsent (первый запуск, обязательный)
 
 Управление версиями — через version catalog (`gradle/libs.versions.toml`).
 
-**minSdk 28** (Android 9), **targetSdk 36**.
+**minSdk 28** (Android 9), **targetSdk 36**. `versionCode = 1`, `versionName = "1.0"`.
 
 **Ключевые зависимости:** Room, Compose BOM, Material 3, Navigation Compose, Lifecycle, Coroutines.
 
@@ -338,14 +364,13 @@ LegalConsent (первый запуск, обязательный)
 
 ## Известные ограничения
 
-1. **`applicationId = "com.example.pulsetimer"`** — оставлен для локальной разработки. При публикации в Google Play может быть отклонён из-за префикса `com.example.*`. RuStore к префиксу требований не предъявляет.
-2. **Состояние сервиса в статическом Flow** — при убийстве процесса система может пересоздать сервис, но `state` обнулится. Автовосстановления тренировки нет.
-3. **Гонка при удалении интервалов** — если удалить интервалы между проверкой в UI и запуском сервиса, `ExecutionScreen` покажет экран ошибки через 6 секунд тайм-аута.
-4. **TTS может быть облачным** — у некоторых вендоров (например, Google для отдельных языков) синтез речи выполняется на серверах. Разработчик это не контролирует.
-5. **Резервное копирование отключено** — `android:allowBackup="false"` и `dataExtractionRules`. Переустановка приложения = потеря данных.
-6. **Ручной экспорт/импорт шаблонов не предусмотрен.**
-7. **Точность таймера** — использует `delay(1000)` + корутины. При сильной нагрузке или агрессивной экономии батареи возможны отклонения в пределах ±100 мс/сек.
-8. **Кастомный Markdown-рендерер** — поддерживает только те элементы разметки, которые используются в текущих документах. При появлении более сложной разметки (вложенные списки, сноски, definition lists) рекомендуется перейти на `org.commonmark:commonmark`.
+1. **Состояние сервиса в статическом Flow** — при убийстве процесса система может пересоздать сервис, но `state` обнулится. Автовосстановления тренировки нет.
+2. **Гонка при удалении интервалов** — если удалить интервалы между проверкой в UI и запуском сервиса, `ExecutionScreen` покажет экран ошибки через 6 секунд тайм-аута.
+3. **TTS может быть облачным** — у некоторых вендоров (например, Google для отдельных языков) синтез речи выполняется на серверах. Разработчик это не контролирует.
+4. **Резервное копирование отключено** — `android:allowBackup="false"` и `dataExtractionRules`. Переустановка приложения = потеря данных.
+5. **Ручной экспорт/импорт шаблонов не предусмотрен.**
+6. **Точность таймера** — расчёт оставшегося времени привязан к `SystemClock.elapsedRealtime()`, накопления дрейфа нет. При агрессивной экономии батареи возможно смещение тика в пределах ±100 мс.
+7. **Кастомный Markdown-рендерер** — поддерживает только те элементы разметки, которые используются в текущих документах. При появлении более сложной разметки (вложенные списки, сноски, definition lists) рекомендуется перейти на `org.commonmark:commonmark`.
 
 ---
 
@@ -370,7 +395,8 @@ LegalConsent (первый запуск, обязательный)
 - [ ] История сохраняется после завершения
 - [ ] Отзыв разрешения уведомлений → настройки показывают красную карточку
 - [ ] Свайп влево/вправо переключает интервалы
-- [ ] Все 5 типов анимаций перехода работают
+- [ ] Все 7 типов анимаций перехода работают
+- [ ] Выбор своего сигнала: открыть диалог, перемотать слайдер, прослушать фрагмент, сохранить
 - [ ] Карточка шаблона с длинным описанием → «Показать полностью» открывает модальное окно
 - [ ] Карточки шаблонов имеют одинаковый размер
 - [ ] В просмотрщике документов корректно отображаются маркированные списки, таблицы и inline-код
@@ -385,6 +411,7 @@ LegalConsent (первый запуск, обязательный)
 - ❌ Нет SDK аналитики, рекламы, трекинга, отчётности о сбоях
 - ✅ Все данные хранятся локально в Room (SQLite) и SharedPreferences
 - ✅ `android:allowBackup="false"` + `dataExtractionRules` — системное резервное копирование отключено на всех версиях Android
+- ✅ Доступ к файлам — только через SAF по явному выбору пользователя, без runtime-разрешений на хранилище
 - ⚠️ Голосовые подсказки озвучиваются системным TTS-движком, который у некоторых вендоров может работать через облако
 
 Подробнее:

@@ -1,4 +1,4 @@
-package com.example.pulsetimer
+package com.pulsetimer
 
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
