@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -86,9 +87,11 @@ import com.pulsetimer.data.entity.SessionLogEntity
 import com.pulsetimer.ui.component.CustomSignalEditorDialog
 import com.pulsetimer.ui.component.SignalPreviewPlayer
 import com.pulsetimer.ui.tutorial.TutorialController
+import com.pulsetimer.ui.tutorial.TutorialScreenTargets
 import com.pulsetimer.ui.tutorial.TutorialSteps
 import com.pulsetimer.ui.tutorial.TutorialTargets
 import com.pulsetimer.ui.tutorial.TutorialTrigger
+import com.pulsetimer.ui.tutorial.lazyListScrollPlan
 import com.pulsetimer.ui.tutorial.tutorialTarget
 import com.pulsetimer.viewmodel.TimerViewModel
 import kotlinx.coroutines.delay
@@ -147,6 +150,43 @@ fun SettingsScreen(
     var workoutSettingsExpanded by rememberSaveable { mutableStateOf(false) }
     var helpExpanded by rememberSaveable { mutableStateOf(false) }
     var historyExpanded by rememberSaveable { mutableStateOf(false) }
+    val settingsListState = rememberLazyListState()
+
+    // Обучение само раскрывает нужную группу и прокручивает список: без этого
+    // подсказки про уведомления, справку и историю висели бы на свёрнутых
+    // группах и на элементах за пределами экрана. Индекс — позиция группы в
+    // ленте ниже: приложение (0), тренировки (1), справка (2), история (3).
+    TutorialScreenTargets(
+        registry = tutorial.targets,
+        prefix = TutorialTargets.PREFIX_SETTINGS,
+        plans = mapOf(
+            TutorialTargets.SETTINGS_APP_GROUP to lazyListScrollPlan(
+                state = settingsListState,
+                index = 0,
+                prepare = { if (!appSettingsExpanded) appSettingsExpanded = true }
+            ),
+            TutorialTargets.SETTINGS_NOTIFICATIONS to lazyListScrollPlan(
+                state = settingsListState,
+                index = 0,
+                prepare = { if (!appSettingsExpanded) appSettingsExpanded = true }
+            ),
+            TutorialTargets.SETTINGS_WORKOUT_GROUP to lazyListScrollPlan(
+                state = settingsListState,
+                index = 1,
+                prepare = { if (!workoutSettingsExpanded) workoutSettingsExpanded = true }
+            ),
+            TutorialTargets.SETTINGS_TUTORIAL to lazyListScrollPlan(
+                state = settingsListState,
+                index = 2,
+                prepare = { if (!helpExpanded) helpExpanded = true }
+            ),
+            TutorialTargets.SETTINGS_HISTORY to lazyListScrollPlan(
+                state = settingsListState,
+                index = 3,
+                prepare = { if (!historyExpanded) historyExpanded = true }
+            )
+        )
+    )
 
     var pendingSignal by remember { mutableStateOf<PendingSignal?>(null) }
 
@@ -223,7 +263,13 @@ fun SettingsScreen(
             TopAppBar(
                 title = { Text("Настройки") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier.tutorialTarget(
+                            tutorial.targets,
+                            TutorialTargets.SETTINGS_BACK
+                        )
+                    ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
                     }
                 }
@@ -234,6 +280,7 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
+            state = settingsListState,
             contentPadding = PaddingValues(
                 start = 16.dp,
                 end = 16.dp,

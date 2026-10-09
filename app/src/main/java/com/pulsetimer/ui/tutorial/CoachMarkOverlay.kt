@@ -8,6 +8,7 @@ import androidx.compose.animation.core.TwoWayConverter
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateOffsetAsState
 import androidx.compose.animation.core.animateValueAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -43,9 +44,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -71,6 +70,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /** Прозрачность затемнения обучения по умолчанию. */
@@ -88,38 +88,39 @@ const val LIGHT_TUTORIAL_SCRIM_ALPHA = 0.55f
  *
  * Слой живёт в `MainActivity` поверх графа навигации, поэтому подсветка работает
  * одинаково на всех экранах. Координаты цели приходят в оконной системе
- * (см. [TutorialTargetRegistry]) и пересчитываются в локальные координаты слоя —
- * разметка не зависит от того, в каком слое лежит сам слой.
+ * (см. [TutorialTargetRegistry]) и пересчитываются в локальные координаты слоя.
  *
- * Тап по затемнению переводит на следующий шаг: так устроены современные coach
- * marks, целиться в кнопку не нужно. При этом нажатия не доходят до интерфейса
- * под слоем — случайный тап не запустит тренировку и не удалит карточку.
+ * Показом управляет [TutorialController]: он сначала доводит экран до нужного
+ * состояния (переход, раскрытие блоков, прокрутка и центрирование цели) и лишь
+ * потом выставляет [TutorialController.isRevealed] — подсказка проявляется
+ * плавно, уже над нужным местом. Тап по затемнению переводит на следующий шаг:
+ * целиться в кнопку не нужно. При этом нажатия не доходят до интерфейса под
+ * слоем — случайный тап не запустит тренировку и не удалит карточку.
  */
 @Composable
 fun CoachMarkOverlay(
-    steps: List<TutorialStep>,
-    targets: TutorialTargetRegistry,
-    onFinish: () -> Unit,
-    modifier: Modifier = Modifier,
-    scrimAlpha: Float = DEFAULT_TUTORIAL_SCRIM_ALPHA
+    controller: TutorialController,
+    modifier: Modifier = Modifier
 ) {
+    val steps = controller.steps
     if (steps.isEmpty()) return
-
-    var stepIndex by remember(steps) { mutableIntStateOf(0) }
-    val step = steps[stepIndex.coerceIn(0, steps.lastIndex)]
+    val targets = controller.targets
+    val stepIndex = controller.stepIndex.coerceIn(0, steps.lastIndex)
+    val step = steps[stepIndex]
 
     var overlayOrigin by remember { mutableStateOf(Offset.Zero) }
     var overlaySize by remember { mutableStateOf(IntSize.Zero) }
     var tooltipSize by remember { mutableStateOf(IntSize.Zero) }
 
-    // Появление: затемнение и подсказка проявляются плавно, без «вспышки».
-    var visible by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { visible = true }
-    val appearAlpha by animateFloatAsState(
-        targetValue = if (visible) 1f else 0f,
-        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
-        label = "coach_mark_appear"
+    // Подсказка появляется только после подготовки шага: пока обучение
+    // переходит на другой экран, раскрывает блоки и прокручивает список, слой
+    // прозрачен — зато нажатия он перехватывает всегда.
+    val reveal by animateFloatAsState(
+        targetValue = if (controller.isRevealed) 1f else 0f,
+        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+        label = "coach_mark_reveal"
     )
+    val scrimAlpha = controller.scrimAlpha
 
     val density = LocalDensity.current
     val accent = MaterialTheme.colorScheme.primary
@@ -140,22 +141,18 @@ fun CoachMarkOverlay(
         label = "coach_mark_pulse_alpha"
     )
 
-    // Цель может отсутствовать (пустой список тренировок, свёрнутая группа
-    // настроек) — тогда шаг показывается по центру, без подсветки.
+    // Цель может отсутствовать (пустой список тренировок, цель ещё не
+    // скомпонована) — тогда шаг показывается по центру, без подсветки.
     val holeRect = step.targetKey
         ?.let { key -> targets.bounds(key) }
         ?.let { bounds ->
             val shifted = bounds.translate(-overlayOrigin.x, -overlayOrigin.y)
-            Rect(
-                left = shifted.left - holeInsetPx,
-                top = shifted.top - holeInsetPx,
-                right = shifted.right + holeInsetPx,
-                bottom = shifted.bottom + holeInsetPx
-            )
+            spotlightRect(shifted, overlaySize, holeInsetPx)
         }
 
     // «Дырка» переезжает к новой цели не рывком, а за 280 мс: переход между
-    // шагами читается как перевод фокуса.
+    // шагами читается как перевод фокуса. Во время подготовки шага слой
+    // прозрачен, поэтому анимация успевает закончиться до появления подсказки.
     val animatedHole by animateValueAsState(
         targetValue = holeRect ?: Rect.Zero,
         typeConverter = RectToAnimationVector,
@@ -164,18 +161,17 @@ fun CoachMarkOverlay(
     )
     val holeToDraw = if (holeRect != null) animatedHole else null
 
-    val goNext: () -> Unit = {
-        if (stepIndex < steps.lastIndex) stepIndex++ else onFinish()
-    }
-
     Box(
         modifier = modifier
             .fillMaxSize()
+            .onSizeChanged { size ->
+                // Размер окна нужен обучению, чтобы центрировать цель прокруткой.
+                controller.viewport = size
+                overlaySize = size
+            }
             .onGloballyPositioned { coordinates ->
                 overlayOrigin = coordinates.positionInWindow()
-                overlaySize = coordinates.size
             }
-            .graphicsLayer { alpha = appearAlpha }
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val scrim = Path().apply {
@@ -185,10 +181,10 @@ fun CoachMarkOverlay(
                 }
                 fillType = PathFillType.EvenOdd
             }
-            drawPath(scrim, Color.Black.copy(alpha = scrimAlpha))
+            drawPath(scrim, Color.Black.copy(alpha = scrimAlpha * reveal))
             holeToDraw?.let { hole ->
                 drawRoundRect(
-                    color = accent.copy(alpha = pulseAlpha),
+                    color = accent.copy(alpha = pulseAlpha * reveal),
                     topLeft = hole.topLeft,
                     size = hole.size,
                     cornerRadius = CornerRadius(cornerPx, cornerPx),
@@ -197,13 +193,14 @@ fun CoachMarkOverlay(
             }
         }
 
-        // Слой, который съедает нажатия по затемнению: элементы под обучением
-        // «не живые», но сам тап переводит на следующий шаг.
+        // Слой, который съедает нажатия: элементы под обучением «не живые», а
+        // тап по фону переводит на следующий шаг. Пока шаг готовится (переход,
+        // прокрутка), нажатия просто не проходят.
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(steps) {
-                    detectTapGestures(onTap = { goNext() })
+                .pointerInput(controller) {
+                    detectTapGestures(onTap = { controller.next() })
                 }
         )
 
@@ -235,15 +232,33 @@ fun CoachMarkOverlay(
             0
         }
 
+        // Подсказка «доезжает» до нужного места: к моменту показа (после
+        // прокрутки и раскрытия блоков) она уже стоит там, где надо.
+        val tooltipOffset by animateOffsetAsState(
+            targetValue = Offset(tooltipX.toFloat(), tooltipY.toFloat()),
+            animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+            label = "coach_mark_tooltip"
+        )
+
         CoachMarkTooltip(
             step = step,
             stepIndex = stepIndex,
             stepCount = steps.size,
-            onBack = { if (stepIndex > 0) stepIndex-- },
-            onNext = goNext,
-            onSkip = onFinish,
+            canGoBack = controller.canGoBack,
+            interactive = controller.isRevealed,
+            onBack = { controller.back() },
+            onNext = { controller.next() },
+            onSkip = { controller.finish() },
             modifier = Modifier
-                .offset { IntOffset(tooltipX, tooltipY) }
+                .offset {
+                    IntOffset(tooltipOffset.x.roundToInt(), tooltipOffset.y.roundToInt())
+                }
+                .graphicsLayer {
+                    alpha = reveal
+                    val scale = 0.94f + 0.06f * reveal
+                    scaleX = scale
+                    scaleY = scale
+                }
                 .onSizeChanged { size -> tooltipSize = size }
         )
     }
@@ -254,12 +269,18 @@ fun CoachMarkOverlay(
  *
  * Текст шага меняется через [AnimatedContent] — при перелистывании контент
  * «подъезжает» снизу, а не подменяется мгновенно.
+ *
+ * @param interactive кнопки нажимаются, только когда шаг уже показан: пока
+ *   обучение ведёт пользователя (переход, прокрутка), подсказка прозрачна и
+ *   не должна ловить случайные нажатия по невидимым кнопкам.
  */
 @Composable
 private fun CoachMarkTooltip(
     step: TutorialStep,
     stepIndex: Int,
     stepCount: Int,
+    canGoBack: Boolean,
+    interactive: Boolean,
     onBack: () -> Unit,
     onNext: () -> Unit,
     onSkip: () -> Unit,
@@ -332,11 +353,19 @@ private fun CoachMarkTooltip(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                CoachMarkDots(count = stepCount, current = stepIndex)
+                // В длинном туре точек больше, чем помещается по ширине подсказки:
+                // там номер шага уже показан в заголовке.
+                if (stepCount <= MAX_PROGRESS_DOTS) {
+                    CoachMarkDots(count = stepCount, current = stepIndex)
+                }
                 Spacer(modifier = Modifier.weight(1f))
                 if (stepIndex < stepCount - 1) {
                     Text(
-                        text = "тап по фону — далее",
+                        text = if (step.pressTarget) {
+                            "обучение нажмёт за вас"
+                        } else {
+                            "тап по фону — далее"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     )
@@ -348,16 +377,22 @@ private fun CoachMarkTooltip(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TextButton(onClick = onSkip) {
+                TextButton(onClick = onSkip, enabled = interactive) {
                     Text(if (stepIndex == stepCount - 1) "Закрыть" else "Пропустить")
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (stepIndex > 0) {
-                        TextButton(onClick = onBack) { Text("Назад") }
+                    if (canGoBack) {
+                        TextButton(onClick = onBack, enabled = interactive) { Text("Назад") }
                         Spacer(modifier = Modifier.width(8.dp))
                     }
-                    Button(onClick = onNext) {
-                        Text(if (stepIndex == stepCount - 1) "Готово" else "Далее")
+                    Button(onClick = onNext, enabled = interactive) {
+                        Text(
+                            text = when {
+                                stepIndex == stepCount - 1 -> "Готово"
+                                step.actionLabel != null -> step.actionLabel
+                                else -> "Далее"
+                            }
+                        )
                     }
                 }
             }
@@ -405,4 +440,48 @@ private val RectToAnimationVector: TwoWayConverter<Rect, AnimationVector4D> =
             Rect(vector.v1, vector.v2, vector.v3, vector.v4)
         }
     )
+
+/** Сколько точек прогресса помещается в подсказку, не ломая её ширину. */
+private const val MAX_PROGRESS_DOTS = 8
+
+/**
+ * Максимальная высота «дырки» относительно экрана: больше половины — и от
+ * затемнения ничего не остаётся, а подсказке некуда встать.
+ */
+private const val SPOTLIGHT_MAX_HEIGHT_RATIO = 0.5f
+
+/** Максимальная ширина «дырки» относительно экрана. */
+private const val SPOTLIGHT_MAX_WIDTH_RATIO = 0.92f
+
+/**
+ * «Дырка» вокруг цели: цель плюс отступ по краям, но не выше
+ * [SPOTLIGHT_MAX_HEIGHT_RATIO] экрана и не шире [SPOTLIGHT_MAX_WIDTH_RATIO].
+ *
+ * Большие карточки (параметры тренировки в редакторе, раскрытая группа
+ * настроек) выше экрана: без ограничения затемнение исчезло бы совсем.
+ * Сжимаем подсветку симметрично относительно центра цели — она остаётся там
+ * же, куда обучение привело цель прокруткой, — и не выпускаем её за экран.
+ */
+private fun spotlightRect(target: Rect, viewport: IntSize, inset: Float): Rect {
+    val inflated = Rect(
+        left = target.left - inset,
+        top = target.top - inset,
+        right = target.right + inset,
+        bottom = target.bottom + inset
+    )
+    if (viewport.width <= 0 || viewport.height <= 0) return inflated
+    val width = min(inflated.width, viewport.width * SPOTLIGHT_MAX_WIDTH_RATIO)
+    val height = min(inflated.height, viewport.height * SPOTLIGHT_MAX_HEIGHT_RATIO)
+    val center = inflated.center
+    return Rect(
+        left = (center.x - width / 2f)
+            .coerceIn(0f, (viewport.width - width).coerceAtLeast(0f)),
+        top = (center.y - height / 2f)
+            .coerceIn(0f, (viewport.height - height).coerceAtLeast(0f)),
+        right = (center.x + width / 2f)
+            .coerceIn(width, viewport.width.toFloat()),
+        bottom = (center.y + height / 2f)
+            .coerceIn(height, viewport.height.toFloat())
+    )
+}
 

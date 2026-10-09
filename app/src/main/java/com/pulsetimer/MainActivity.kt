@@ -23,6 +23,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -163,8 +164,11 @@ class MainActivity : ComponentActivity() {
                     // Обучение живёт на этом уровне: слой coach marks рисуется
                     // поверх графа навигации, поэтому подсветка работает
                     // одинаково на всех экранах, а сами экраны только
-                    // регистрируют свои цели.
-                    val tutorial = remember { TutorialController() }
+                    // регистрируют свои цели, планы их показа и действия.
+                    // Корутины обучения живут вместе с активностью: они водят
+                    // пользователя по экранам, раскрывают блоки и прокручивают списки.
+                    val tutorialScope = rememberCoroutineScope()
+                    val tutorial = remember { TutorialController(tutorialScope) }
 
                     // Обучение перекрывает интерфейс: системный «Назад» закрывает
                     // его, а не выходит из приложения.
@@ -363,16 +367,13 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    // Слой обучения поверх навигации: затемнение, «дырка» вокруг
-                    // цели и подсказка. Затемнение тут ни при чём — контент под
-                    // ним продолжает жить (таймер тренировки идёт).
+                    // Слой обучения — сосед анимируемого контента, а не его часть:
+                    // координаты целей приходят в оконной системе, поэтому
+                    // появление контента (масштаб, сдвиг) не должно уводить
+                    // подсветку в сторону. Затемнение тут ни при чём — контент
+                    // под ним продолжает жить (таймер тренировки идёт).
                     if (tutorial.isRunning) {
-                        CoachMarkOverlay(
-                            steps = tutorial.steps,
-                            targets = tutorial.targets,
-                            scrimAlpha = tutorial.scrimAlpha,
-                            onFinish = { tutorial.finish() }
-                        )
+                        CoachMarkOverlay(controller = tutorial)
                     }
                 }
             }

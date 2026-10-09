@@ -79,10 +79,13 @@ import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.data.entity.TemplateEntity
 import com.pulsetimer.service.TimerService
 import com.pulsetimer.ui.tutorial.TutorialController
+import com.pulsetimer.ui.tutorial.TutorialScrollPlan
+import com.pulsetimer.ui.tutorial.TutorialScreenTargets
 import com.pulsetimer.ui.tutorial.TutorialSteps
 import com.pulsetimer.ui.tutorial.TutorialTargetRegistry
 import com.pulsetimer.ui.tutorial.TutorialTargets
 import com.pulsetimer.ui.tutorial.TutorialTrigger
+import com.pulsetimer.ui.tutorial.markTourCompleted
 import com.pulsetimer.ui.tutorial.tutorialTarget
 import com.pulsetimer.viewmodel.TimerViewModel
 import kotlinx.coroutines.coroutineScope
@@ -101,20 +104,30 @@ fun MainScreen(
     onSettingsClick: () -> Unit
 ) {
     val settings by AppSettingsStore.settings.collectAsStateWithLifecycle()
+    val templates by viewModel.templates.collectAsStateWithLifecycle()
+
+    // Набор шагов зависит от того, есть ли тренировки: без них показывать
+    // редактор и запуск нечего. Список приходит из базы асинхронно, но показ
+    // стартует с задержкой, а смена набора перезапускает ожидание.
+    val hasWorkouts = templates.isNotEmpty()
+    val steps = remember(hasWorkouts) {
+        TutorialSteps.guidedTour(hasWorkouts = hasWorkouts)
+    }
 
     // Обучение стартует автоматически после онбординга и по запросу из
     // «Настроек». Запрос — одноразовый: флаг сбрасываем по завершении, иначе
     // обучение возвращалось бы при каждой перерисовке главного экрана.
     TutorialTrigger(
         controller = tutorial,
-        steps = TutorialSteps.MAIN_SCREEN,
+        steps = steps,
         enabled = settings.tutorialRequested ||
             (!settings.tutorialCompleted && settings.onboardingCompleted),
         prefix = TutorialTargets.PREFIX_MAIN,
+        // Тур помечает пройденными только те экраны, которые успел показать:
+        // без тренировок он не доходит до редактора и запуска, а подсказки по
+        // ним покажет первый заход на соответствующий экран.
         onCompleted = {
-            AppSettingsStore.update {
-                it.copy(tutorialCompleted = true, tutorialRequested = false)
-            }
+            AppSettingsStore.update { current -> current.markTourCompleted(steps) }
         },
         // Первый показ ждёт, пока закончится появление контента, иначе
         // подсветка «дрожит» вместе с анимацией входа главного экрана.
@@ -158,6 +171,61 @@ private fun MainScreenScaffold(
                 !timerState.isFinished &&
                 timerState.templateId > 0L
 
+    /**
+     * Запуск тренировки, которая открыта в пейджере. Обучение «нажимает» ту же
+     * кнопку за пользователя, поэтому и код здесь один: проверка интервалов,
+     * выбор шаблона, старт сервиса и переход на экран отсчёта.
+     */
+    val startTemplate: (TemplateEntity) -> Unit = { template ->
+        scope.launch {
+            if (!viewModel.hasIntervals(template.id)) {
+                val result = snackbarHostState.showSnackbar(
+                    message = "В тренировке «${template.name}» нет интервалов",
+                    actionLabel = "Редактировать",
+                    withDismissAction = true,
+                    duration = SnackbarDuration.Long
+                )
+                if (result == SnackbarResult.ActionPerformed) {
+                    onEditClick(template.id)
+                }
+                return@launch
+            }
+            viewModel.selectTemplate(template.id)
+            viewModel.startTimer(template.id, template.name)
+            onStartClick(template.id, template.name)
+        }
+    }
+
+    // Обучение ведёт пользователя через те же элементы, что и он сам: перед
+    // показом шага пейджер листается к первой карточке, а «Далее» на шагах-
+    // переходах открывает редактор, настройки или запускает тренировку.
+    val firstCardPlan = remember(pagerState) {
+        TutorialScrollPlan(
+            prepare = {
+                if (pagerState.pageCount > 0) pagerState.animateScrollToPage(0)
+            }
+        )
+    }
+    TutorialScreenTargets(
+        registry = tutorialTargets,
+        prefix = TutorialTargets.PREFIX_MAIN,
+        plans = mapOf(
+            TutorialTargets.CARD to firstCardPlan,
+            TutorialTargets.CARD_ACTIONS to firstCardPlan,
+            TutorialTargets.CARD_EDIT to firstCardPlan,
+            TutorialTargets.START to firstCardPlan
+        ),
+        actions = mapOf(
+            TutorialTargets.SETTINGS_ICON to onSettingsClick,
+            TutorialTargets.CARD_EDIT to {
+                templates.firstOrNull()?.let { template -> onEditClick(template.id) }
+            },
+            TutorialTargets.START to {
+                templates.getOrNull(pagerState.currentPage)?.let(startTemplate)
+            }
+        )
+    )
+
     LaunchedEffect(templates.size) {
         if (templates.isNotEmpty() && pagerState.currentPage >= templates.size) {
             pagerState.animateScrollToPage(templates.size - 1)
@@ -196,7 +264,13 @@ private fun MainScreenScaffold(
             TopAppBar(
                 title = { Text("PulseTimer") },
                 actions = {
-                    IconButton(onClick = onSettingsClick) {
+                    IconButton(
+                        onClick = onSettingsClick,
+                        modifier = Modifier.tutorialTarget(
+                            tutorialTargets,
+                            TutorialTargets.SETTINGS_ICON
+                        )
+                    ) {
                         Icon(Icons.Default.Settings, contentDescription = "Настройки")
                     }
                 }
@@ -324,18 +398,40 @@ private fun MainScreenScaffold(
                         viewModel.clearRecentlyAddedTemplate(template.id)
                     }
 
+                    // Цели обучения ставим только на первую карточку: у остальных
+                    // страниц координаты перетирали бы подсветку друг друга,
+                    // а обучение всё равно листает пейджер к первой.
+                    val isTutorialCard = page == 0
+                    val cardTarget = if (isTutorialCard) {
+                        Modifier.tutorialTarget(tutorialTargets, TutorialTargets.CARD)
+                    } else {
+                        Modifier
+                    }
+                    val actionsTarget = if (isTutorialCard) {
+                        Modifier.tutorialTarget(
+                            tutorialTargets,
+                            TutorialTargets.CARD_ACTIONS
+                        )
+                    } else {
+                        Modifier
+                    }
+                    // Карандаш: обучение «нажимает» его, чтобы открыть редактор.
+                    val editTarget = if (isTutorialCard) {
+                        Modifier.tutorialTarget(tutorialTargets, TutorialTargets.CARD_EDIT)
+                    } else {
+                        Modifier
+                    }
+
                     TemplateCard(
                         template = template,
                         canMoveUp = page > 0,
                         canMoveDown = page < templates.lastIndex,
                         onMoveUp = { viewModel.moveTemplate(template.id, -1) },
                         onMoveDown = { viewModel.moveTemplate(template.id, +1) },
-                        actionsModifier = Modifier.tutorialTarget(
-                            tutorialTargets,
-                            TutorialTargets.CARD_ACTIONS
-                        ),
+                        actionsModifier = actionsTarget,
+                        editModifier = editTarget,
                         modifier = Modifier
-                            .tutorialTarget(tutorialTargets, TutorialTargets.CARD)
+                            .then(cardTarget)
                             .graphicsLayer {
                             val combinedScale = deleteScale * entryScale.value
                             scaleX = combinedScale
@@ -377,27 +473,7 @@ private fun MainScreenScaffold(
 
                 val currentTemplate = templates.getOrNull(pagerState.currentPage)
                 Button(
-                    onClick = {
-                        currentTemplate?.let { template ->
-                            scope.launch {
-                                if (!viewModel.hasIntervals(template.id)) {
-                                    val result = snackbarHostState.showSnackbar(
-                                        message = "В тренировке «${template.name}» нет интервалов",
-                                        actionLabel = "Редактировать",
-                                        withDismissAction = true,
-                                        duration = SnackbarDuration.Long
-                                    )
-                                    if (result == SnackbarResult.ActionPerformed) {
-                                        onEditClick(template.id)
-                                    }
-                                    return@launch
-                                }
-                                viewModel.selectTemplate(template.id)
-                                viewModel.startTimer(template.id, template.name)
-                                onStartClick(template.id, template.name)
-                            }
-                        }
-                    },
+                    onClick = { currentTemplate?.let(startTemplate) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 32.dp, vertical = 16.dp)
@@ -542,6 +618,7 @@ fun TemplateCard(
     onDelete: () -> Unit,
     onEdit: () -> Unit,
     actionsModifier: Modifier = Modifier,
+    editModifier: Modifier = Modifier,
     modifier: Modifier = Modifier
 ) {
     var showFullDescription by remember(template.id) { mutableStateOf(false) }
@@ -653,7 +730,7 @@ fun TemplateCard(
                             contentDescription = "Переместить тренировку ниже"
                         )
                     }
-                    IconButton(onClick = onEdit) {
+                    IconButton(onClick = onEdit, modifier = editModifier) {
                         Icon(Icons.Default.Edit, contentDescription = "Редактировать")
                     }
                     IconButton(onClick = onDelete) {

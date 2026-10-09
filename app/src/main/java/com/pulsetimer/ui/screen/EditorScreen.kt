@@ -74,9 +74,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.data.entity.IntervalEntity
 import com.pulsetimer.ui.tutorial.TutorialController
+import com.pulsetimer.ui.tutorial.TutorialScreenTargets
 import com.pulsetimer.ui.tutorial.TutorialSteps
 import com.pulsetimer.ui.tutorial.TutorialTargets
 import com.pulsetimer.ui.tutorial.TutorialTrigger
+import com.pulsetimer.ui.tutorial.lazyListScrollPlan
 import com.pulsetimer.ui.tutorial.tutorialTarget
 import com.pulsetimer.viewmodel.TimerViewModel
 import kotlinx.coroutines.delay
@@ -262,15 +264,51 @@ fun EditorScreen(
     var editingInterval by remember { mutableStateOf<IntervalEntity?>(null) }
     val intervalsListState = rememberLazyListState()
 
+    // Обучение само прокручивает ленту редактора: карточка интервала может
+    // оказаться ниже экрана, и тогда подсветка шага «повисла» бы в пустоте.
+    // Индексы — позиции в ленте ниже: параметры тренировки (0), заголовок
+    // «Интервалы» (1), первый интервал (2).
+    TutorialScreenTargets(
+        registry = tutorial.targets,
+        prefix = TutorialTargets.PREFIX_EDITOR,
+        plans = mapOf(
+            TutorialTargets.EDITOR_TEMPLATE to lazyListScrollPlan(
+                state = intervalsListState,
+                index = 0
+            ),
+            TutorialTargets.EDITOR_INTERVAL to lazyListScrollPlan(
+                state = intervalsListState,
+                index = 2
+            ),
+            TutorialTargets.EDITOR_INTERVAL_ACTIONS to lazyListScrollPlan(
+                state = intervalsListState,
+                index = 2
+            )
+        ),
+        // Стрелка «назад»: обучение возвращает пользователя к списку тренировок.
+        actions = mapOf(
+            TutorialTargets.EDITOR_BACK to {
+                viewModel.clearSelectedTemplate()
+                onBack()
+            }
+        )
+    )
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Редактор") },
                 navigationIcon = {
-                    IconButton(onClick = {
-                        viewModel.clearSelectedTemplate()
-                        onBack()
-                    }) {
+                    IconButton(
+                        onClick = {
+                            viewModel.clearSelectedTemplate()
+                            onBack()
+                        },
+                        modifier = Modifier.tutorialTarget(
+                            tutorial.targets,
+                            TutorialTargets.EDITOR_BACK
+                        )
+                    ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
                     }
                 }
