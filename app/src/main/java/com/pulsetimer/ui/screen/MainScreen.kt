@@ -1,5 +1,6 @@
 package com.pulsetimer.ui.screen
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -34,6 +35,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -73,8 +76,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.data.entity.TemplateEntity
 import com.pulsetimer.service.TimerService
+import com.pulsetimer.ui.tutorial.CoachMarkOverlay
+import com.pulsetimer.ui.tutorial.TutorialSteps
+import com.pulsetimer.ui.tutorial.TutorialTargetRegistry
+import com.pulsetimer.ui.tutorial.TutorialTargets
+import com.pulsetimer.ui.tutorial.tutorialTarget
 import com.pulsetimer.viewmodel.TimerViewModel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -83,10 +92,69 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun MainScreen(
     viewModel: TimerViewModel = viewModel(),
+    onStartClick: (Long, String) -> Unit,
+    onEditClick: (Long) -> Unit,
+    onSettingsClick: () -> Unit
+) {
+    val tutorialTargets = remember { TutorialTargetRegistry() }
+    val settings by AppSettingsStore.settings.collectAsStateWithLifecycle()
+    var tutorialRunning by remember { mutableStateOf(false) }
+
+    val finishTutorial: () -> Unit = {
+        tutorialRunning = false
+        AppSettingsStore.update {
+            it.copy(tutorialCompleted = true, tutorialRequested = false)
+        }
+    }
+
+    // Обучение стартует автоматически после онбординга и по запросу из
+    // «Настроек». Запрос — одноразовый: сбрасываем флаг сразу, иначе обучение
+    // возвращалось бы при каждой перерисовке настроек.
+    LaunchedEffect(settings.tutorialCompleted, settings.tutorialRequested) {
+        if (settings.tutorialRequested) {
+            // Пользователь сам попросил обучение — показываем без задержки.
+            tutorialRunning = true
+            AppSettingsStore.update { it.copy(tutorialRequested = false) }
+        } else if (!settings.tutorialCompleted && settings.onboardingCompleted) {
+            // Первый показ: ждём, пока закончится появление контента, иначе
+            // подсветка «дрожит» вместе с анимацией входа главного экрана.
+            delay(600)
+            tutorialRunning = true
+        }
+    }
+
+    if (tutorialRunning) {
+        // Обучение перекрывает экран: системный «Назад» закрывает его, а не
+        // выходит из приложения (закрытие засчитывается как «просмотрено»).
+        BackHandler(onBack = finishTutorial)
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        MainScreenScaffold(
+            viewModel = viewModel,
+            tutorialTargets = tutorialTargets,
+            onStartClick = onStartClick,
+            onEditClick = onEditClick,
+            onSettingsClick = onSettingsClick
+        )
+        if (tutorialRunning) {
+            CoachMarkOverlay(
+                steps = TutorialSteps.MAIN_SCREEN,
+                targets = tutorialTargets,
+                onFinish = finishTutorial
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@Composable
+private fun MainScreenScaffold(
+    viewModel: TimerViewModel,
+    tutorialTargets: TutorialTargetRegistry,
     onStartClick: (Long, String) -> Unit,
     onEditClick: (Long) -> Unit,
     onSettingsClick: () -> Unit
@@ -185,7 +253,8 @@ fun MainScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 24.dp, vertical = 12.dp)
-                    .height(52.dp),
+                    .height(52.dp)
+                    .tutorialTarget(tutorialTargets, TutorialTargets.ADD_TEMPLATE),
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Icon(Icons.Default.Add, contentDescription = null)
@@ -211,7 +280,8 @@ fun MainScreen(
                     state = pagerState,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f),
+                        .weight(1f)
+                        .tutorialTarget(tutorialTargets, TutorialTargets.PAGER),
                     contentPadding = PaddingValues(horizontal = 32.dp),
                     pageSpacing = 16.dp,
                     // Ключ по id сохраняет визуальную позицию существующих
@@ -275,7 +345,17 @@ fun MainScreen(
 
                     TemplateCard(
                         template = template,
-                        modifier = Modifier.graphicsLayer {
+                        canMoveUp = page > 0,
+                        canMoveDown = page < templates.lastIndex,
+                        onMoveUp = { viewModel.moveTemplate(template.id, -1) },
+                        onMoveDown = { viewModel.moveTemplate(template.id, +1) },
+                        actionsModifier = Modifier.tutorialTarget(
+                            tutorialTargets,
+                            TutorialTargets.CARD_ACTIONS
+                        ),
+                        modifier = Modifier
+                            .tutorialTarget(tutorialTargets, TutorialTargets.CARD)
+                            .graphicsLayer {
                             val combinedScale = deleteScale * entryScale.value
                             scaleX = combinedScale
                             scaleY = combinedScale
@@ -340,7 +420,8 @@ fun MainScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 32.dp, vertical = 16.dp)
-                        .height(64.dp),
+                        .height(64.dp)
+                        .tutorialTarget(tutorialTargets, TutorialTargets.START),
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary
@@ -473,8 +554,13 @@ private const val CARD_DESC_MAX_LINES = 4
 @Composable
 fun TemplateCard(
     template: TemplateEntity,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
     onDelete: () -> Unit,
     onEdit: () -> Unit,
+    actionsModifier: Modifier = Modifier,
     modifier: Modifier = Modifier
 ) {
     var showFullDescription by remember(template.id) { mutableStateOf(false) }
@@ -564,14 +650,31 @@ fun TemplateCard(
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))
+                // Стрелки перемещения — крайние позиции недоступны, а не
+                // скрыты: так подпись места не «прыгает» при перелистывании
+                // и понятно, что порядок вообще можно менять.
                 Row(
-                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(actionsModifier),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    IconButton(onClick = onMoveUp, enabled = canMoveUp) {
+                        Icon(
+                            Icons.Default.KeyboardArrowUp,
+                            contentDescription = "Переместить тренировку выше"
+                        )
+                    }
+                    IconButton(onClick = onMoveDown, enabled = canMoveDown) {
+                        Icon(
+                            Icons.Default.KeyboardArrowDown,
+                            contentDescription = "Переместить тренировку ниже"
+                        )
+                    }
                     IconButton(onClick = onEdit) {
                         Icon(Icons.Default.Edit, contentDescription = "Редактировать")
                     }
-                    Spacer(modifier = Modifier.width(16.dp))
                     IconButton(onClick = onDelete) {
                         Icon(
                             Icons.Default.Delete,

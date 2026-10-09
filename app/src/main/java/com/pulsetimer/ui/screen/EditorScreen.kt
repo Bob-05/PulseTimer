@@ -29,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -440,6 +441,9 @@ fun EditorScreen(
                         canMoveUp = index > 0,
                         canMoveDown = index < intervals.lastIndex,
                         onEdit = { editingInterval = interval },
+                        onDuplicate = {
+                            viewModel.duplicateInterval(templateId, interval.id)
+                        },
                         onDelete = { viewModel.deleteInterval(interval) },
                         onMoveUp = {
                             viewModel.moveInterval(templateId, interval.id, -1)
@@ -508,6 +512,7 @@ fun IntervalItem(
     canMoveUp: Boolean,
     canMoveDown: Boolean,
     onEdit: () -> Unit,
+    onDuplicate: () -> Unit,
     onDelete: () -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
@@ -593,6 +598,12 @@ fun IntervalItem(
                 }
                 IconButton(onClick = onEdit) {
                     Icon(Icons.Default.Edit, contentDescription = "Изменить интервал")
+                }
+                IconButton(onClick = onDuplicate) {
+                    Icon(
+                        Icons.Default.ContentCopy,
+                        contentDescription = "Дублировать интервал"
+                    )
                 }
                 IconButton(onClick = onDelete) {
                     Icon(

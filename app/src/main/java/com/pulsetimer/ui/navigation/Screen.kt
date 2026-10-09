@@ -9,6 +9,16 @@ sealed class Screen(val route: String) {
     data object Settings : Screen("settings")
 
     /**
+     * Детальный просмотр одной записи истории: `session_detail/{logId}`.
+     * Список интервалов внутри сессии лежит в отдельной таблице, поэтому
+     * деталям нужен собственный экран, а не раскрытие карточки.
+     */
+    data object SessionDetail : Screen("session_detail") {
+        const val ARG_LOG_ID = "logId"
+        fun routeFor(logId: Long): String = "$route/$logId"
+    }
+
+    /**
      * Полноэкранный просмотрщик юридического документа.
      * Маршрут: `legal_document/{type}`, где type = "privacy" | "terms".
      */

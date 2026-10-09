@@ -11,6 +11,14 @@ data class TemplateEntity(
     val name: String,
     val description: String,
     val createdAt: Long = System.currentTimeMillis(),
+    /**
+     * Пользовательский порядок карточек на главном экране.
+     * Чем БОЛЬШЕ значение, тем раньше карточка в списке
+     * (`ORDER BY sortOrder DESC`), поэтому новая тренировка получает
+     * `max + 1` и встаёт первой — как было до появления ручной сортировки.
+     */
+    @ColumnInfo(defaultValue = "0")
+    val sortOrder: Int = 0,
     @ColumnInfo(defaultValue = "'🏋️'")
     val iconEmoji: String = "🏋️",
     @ColumnInfo(defaultValue = "'COLOR'")

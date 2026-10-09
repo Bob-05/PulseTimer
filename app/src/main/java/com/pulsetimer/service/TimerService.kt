@@ -33,6 +33,7 @@ import com.pulsetimer.MainActivity
 import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.data.database.AppDatabase
 import com.pulsetimer.data.entity.IntervalEntity
+import com.pulsetimer.data.entity.SessionIntervalLogEntity
 import com.pulsetimer.data.entity.SessionLogEntity
 import com.pulsetimer.speech.SpeechEngine
 import com.pulsetimer.util.ToneGenerator
@@ -72,6 +73,14 @@ class TimerService : Service() {
     private var templateVibrationPatternId: Int = 1
     private var activeTemplateId: Long? = null
     private var sessionStartedAt: Long = 0L
+    /** id записи в `session_logs` для текущей сессии (null — история недоступна). */
+    private var activeSessionLogId: Long? = null
+    /**
+     * Какие интервалы уже засчитаны как отработанные. Именно список, а не
+     * счётчик: после «Назад» порядок прохождения перестаёт совпадать с
+     * индексами, и число нельзя вывести из номера текущего интервала.
+     */
+    private val intervalCounted = mutableListOf<Boolean>()
 
     private var mediaPlayer: MediaPlayer? = null
     private var playingAudioUri: String? = null
@@ -294,6 +303,9 @@ class TimerService : Service() {
 
             activeTemplateId = templateId
             sessionStartedAt = System.currentTimeMillis()
+            intervalCounted.clear()
+            repeat(intervals.size) { intervalCounted.add(false) }
+            persistSessionStart()
 
             currentIndex = 0
             isPaused = false
@@ -310,30 +322,163 @@ class TimerService : Service() {
         }
     }
 
-    private fun finalizeAbandonedSession() {
+    /**
+     * Создаёт запись сессии и построчный лог интервалов.
+     *
+     * Сессия пишется в БД уже на старте, а не в конце: если сервис убьют,
+     * история всё равно останется — с прогрессом на момент обрыва.
+     */
+    private suspend fun persistSessionStart() {
         val templateId = activeTemplateId ?: return
-        val startedAt = sessionStartedAt
-        val workoutName = templateName
-        val completedAt = System.currentTimeMillis()
+        try {
+            val logId = dao.insertSessionLog(
+                SessionLogEntity(
+                    templateId = templateId,
+                    templateName = templateName,
+                    startedAt = sessionStartedAt,
+                    completedAt = null,
+                    totalDurationSeconds = 0,
+                    plannedDurationSeconds = intervals.sumOf { it.durationSeconds.coerceAtLeast(0) },
+                    completedIntervals = 0,
+                    totalIntervals = intervals.size,
+                    lastIntervalIndex = 0,
+                    interrupted = false
+                )
+            )
+            activeSessionLogId = logId
+            dao.insertSessionIntervalLogs(
+                intervals.mapIndexed { index, interval ->
+                    SessionIntervalLogEntity(
+                        sessionLogId = logId,
+                        name = interval.name,
+                        iconEmoji = interval.iconEmoji,
+                        colorHex = interval.colorHex,
+                        plannedSeconds = interval.durationSeconds.coerceAtLeast(0),
+                        actualSeconds = 0,
+                        orderIndex = index,
+                        wasSkipped = false
+                    )
+                }
+            )
+        } catch (e: SQLiteException) {
+            Log.e(TAG, "Unable to persist session start", e)
+            activeSessionLogId = null
+        }
+    }
+
+    /**
+     * Закрывает запись активной сессии.
+     *
+     * Все значения приходят параметрами: сразу после вызова может стартовать
+     * новая сессия и перезаписать поля сервиса, поэтому читать их из корутины
+     * IO уже нельзя.
+     */
+    private suspend fun finalizeSession(
+        logId: Long,
+        startedAt: Long,
+        completedAt: Long,
+        completed: Boolean,
+        interrupted: Boolean,
+        completedIntervals: Int,
+        lastIntervalIndex: Int
+    ) {
         val duration = ((completedAt - startedAt) / 1_000L)
             .coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        try {
+            dao.finalizeSessionLog(
+                logId = logId,
+                completedAt = if (completed) completedAt else null,
+                totalDurationSeconds = duration,
+                completedIntervals = completedIntervals,
+                lastIntervalIndex = lastIntervalIndex,
+                interrupted = interrupted
+            )
+        } catch (e: SQLiteException) {
+            Log.e(TAG, "Unable to finalize session $logId", e)
+        }
+    }
+
+    /**
+     * Фиксирует результат текущего интервала в детальной истории.
+     *
+     * Вызывается во всех местах, где мы уходим с интервала (досчитал до нуля,
+     * «Пропустить», «Назад», стоп), поэтому в историю попадает и полный
+     * проход, и оборванный на середине.
+     */
+    private fun persistCurrentInterval(wasSkipped: Boolean) {
+        val logId = activeSessionLogId ?: return
+        val intervalIndex = currentIndex
+        if (intervalIndex !in intervals.indices) return
+
+        val planned = intervals[intervalIndex].durationSeconds.coerceAtLeast(0)
+        val elapsed = (planned - timeRemaining).coerceIn(0, planned)
+        if (intervalIndex in intervalCounted.indices) {
+            // Монотонно: однажды засчитанный интервал не «раззачитывается»
+            // повторным проходом через «Назад».
+            intervalCounted[intervalIndex] =
+                intervalCounted[intervalIndex] || elapsed > 0 || elapsed >= planned
+        }
+        val completedIntervals = intervalCounted.count { it }
+        serviceScope.launch(Dispatchers.IO + NonCancellable) {
+            persistIntervalResult(logId, intervalIndex, elapsed, wasSkipped, completedIntervals)
+        }
+    }
+
+    /**
+     * Запись результата интервала. Отдельный suspend-хелпер нужен ради
+     * onDestroy: там запись идёт внутри уже запущенной корутины, и повторно
+     * снимать значения с полей сервиса было бы нельзя.
+     */
+    private suspend fun persistIntervalResult(
+        logId: Long,
+        intervalIndex: Int,
+        actualSeconds: Int,
+        wasSkipped: Boolean,
+        completedIntervals: Int
+    ) {
+        try {
+            dao.updateSessionIntervalLog(
+                sessionLogId = logId,
+                orderIndex = intervalIndex,
+                actualSeconds = actualSeconds,
+                wasSkipped = wasSkipped
+            )
+            dao.updateSessionProgress(
+                logId = logId,
+                completedIntervals = completedIntervals,
+                lastIntervalIndex = intervalIndex
+            )
+        } catch (e: SQLiteException) {
+            Log.e(TAG, "Unable to update interval progress", e)
+        }
+    }
+
+    /**
+     * Прошлая сессия вытеснена новой: закрываем её как прерванную, чтобы в
+     * истории она не осталась «висящей» без времени окончания.
+     */
+    private fun finalizeAbandonedSession() {
+        val logId = activeSessionLogId
         activeTemplateId = null
-        // NonCancellable: insert не должен пропасть, если сервис будет
+        activeSessionLogId = null
+        if (logId == null) return
+        val startedAt = sessionStartedAt
+        val completedAt = System.currentTimeMillis()
+        val completedIntervals = intervalCounted.count { it }
+        val lastIntervalIndex =
+            if (intervals.isEmpty()) -1 else currentIndex.coerceIn(0, intervals.lastIndex)
+        // NonCancellable: обновление не должно пропасть, если сервис будет
         // уничтожен сразу после старта новой сессии.
         serviceScope.launch(Dispatchers.IO + NonCancellable) {
-            try {
-                dao.insertSessionLog(
-                    SessionLogEntity(
-                        templateId = templateId,
-                        templateName = workoutName,
-                        startedAt = startedAt,
-                        completedAt = null,
-                        totalDurationSeconds = duration
-                    )
-                )
-            } catch (e: SQLiteException) {
-                Log.e(TAG, "Unable to persist abandoned session", e)
-            }
+            finalizeSession(
+                logId = logId,
+                startedAt = startedAt,
+                completedAt = completedAt,
+                completed = false,
+                interrupted = true,
+                completedIntervals = completedIntervals,
+                lastIntervalIndex = lastIntervalIndex
+            )
         }
     }
 
@@ -463,6 +608,7 @@ class TimerService : Service() {
                 delay(nextTickDelay.coerceAtLeast(1L))
             }
             if (!isPaused && activeTemplateId != null) {
+                persistCurrentInterval(wasSkipped = false)
                 currentIndex++
                 runInterval()
             }
@@ -474,6 +620,7 @@ class TimerService : Service() {
         timerJob?.cancel()
         timerJob = null
         cancelTonePlayback()
+        persistCurrentInterval(wasSkipped = true)
         currentIndex++
         runInterval()
     }
@@ -483,6 +630,7 @@ class TimerService : Service() {
         timerJob?.cancel()
         timerJob = null
         cancelTonePlayback()
+        persistCurrentInterval(wasSkipped = false)
         currentIndex--
         runInterval()
     }
@@ -518,22 +666,27 @@ class TimerService : Service() {
         releaseMediaResources(keepTextToSpeech = completionSpeechPending)
         if (completionSpeechPending) speakWorkoutCompletion()
         val completedAt = System.currentTimeMillis()
-        serviceScope.launch(Dispatchers.IO) {
-            if (templateId != null) {
-                try {
-                    dao.insertSessionLog(
-                        SessionLogEntity(
-                            templateId = templateId,
-                            templateName = workoutName,
-                            startedAt = startedAt,
-                            completedAt = if (completed) completedAt else null,
-                            totalDurationSeconds = ((completedAt - startedAt) / 1_000L)
-                                .coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-                        )
-                    )
-                } catch (e: SQLiteException) {
-                    Log.e(TAG, "Unable to insert workout history", e)
-                }
+        // Фиксируем и текущий, возможно недосчитанный интервал: если тренировку
+        // останавливают на середине, эта часть тоже должна попасть в историю.
+        // (Для штатного завершения currentIndex уже за пределами списка, и
+        // запись была сделана циклом отсчёта.)
+        persistCurrentInterval(wasSkipped = false)
+        val logId = activeSessionLogId
+        activeSessionLogId = null
+        val completedIntervals = intervalCounted.count { it }
+        val lastIntervalIndex =
+            if (intervals.isEmpty()) -1 else currentIndex.coerceIn(0, intervals.lastIndex)
+        serviceScope.launch(Dispatchers.IO + NonCancellable) {
+            if (logId != null) {
+                finalizeSession(
+                    logId = logId,
+                    startedAt = startedAt,
+                    completedAt = completedAt,
+                    completed = completed,
+                    interrupted = false,
+                    completedIntervals = completedIntervals,
+                    lastIntervalIndex = lastIntervalIndex
+                )
             }
             withContext(Dispatchers.Main) {
                 updateState(
@@ -1242,31 +1395,48 @@ class TimerService : Service() {
 
     override fun onDestroy() {
         // Если сервис уничтожается, пока сессия ещё активна (не через
-        // ACTION_STOP — например, внешним stopService), сохраняем её как
-        // брошенную. Должно быть ДО serviceScope.cancel(), иначе launch
+        // ACTION_STOP — например, внешним stopService), закрываем её как
+        // прерванную системой: completedAt остаётся null (тренировка не
+        // завершилась), а флаг interrupted отличает это от остановки
+        // пользователем. Должно быть ДО serviceScope.cancel(), иначе launch
         // не выполнится. NonCancellable гарантирует, что корутина
         // доживёт до конца даже после отмены scope.
         if (activeTemplateId != null) {
-            val templateId = activeTemplateId!!
+            val logId = activeSessionLogId
             val startedAt = sessionStartedAt
-            val workoutName = templateName
             val completedAt = System.currentTimeMillis()
-            val duration = ((completedAt - startedAt) / 1_000L)
-                .coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+            val intervalIndex = currentIndex
+            val partialSeconds = if (intervalIndex in intervals.indices) {
+                val planned = intervals[intervalIndex].durationSeconds.coerceAtLeast(0)
+                (planned - timeRemaining).coerceIn(0, planned)
+            } else {
+                0
+            }
+            val completedIntervals = intervalCounted.count { it }
+            val lastIntervalIndex =
+                if (intervals.isEmpty()) -1 else currentIndex.coerceIn(0, intervals.lastIndex)
             activeTemplateId = null
-            serviceScope.launch(Dispatchers.IO + NonCancellable) {
-                try {
-                    dao.insertSessionLog(
-                        SessionLogEntity(
-                            templateId = templateId,
-                            templateName = workoutName,
-                            startedAt = startedAt,
-                            completedAt = null,
-                            totalDurationSeconds = duration
+            activeSessionLogId = null
+            if (logId != null) {
+                serviceScope.launch(Dispatchers.IO + NonCancellable) {
+                    if (intervalIndex in intervals.indices) {
+                        persistIntervalResult(
+                            logId = logId,
+                            intervalIndex = intervalIndex,
+                            actualSeconds = partialSeconds,
+                            wasSkipped = false,
+                            completedIntervals = completedIntervals
                         )
+                    }
+                    finalizeSession(
+                        logId = logId,
+                        startedAt = startedAt,
+                        completedAt = completedAt,
+                        completed = false,
+                        interrupted = true,
+                        completedIntervals = completedIntervals,
+                        lastIntervalIndex = lastIntervalIndex
                     )
-                } catch (e: SQLiteException) {
-                    Log.e(TAG, "Unable to persist session on destroy", e)
                 }
             }
         }

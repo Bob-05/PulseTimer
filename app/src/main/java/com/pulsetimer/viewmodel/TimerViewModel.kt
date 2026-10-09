@@ -6,9 +6,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pulsetimer.data.database.AppDatabase
 import com.pulsetimer.data.entity.IntervalEntity
+import com.pulsetimer.data.entity.SessionIntervalLogEntity
 import com.pulsetimer.data.entity.SessionLogEntity
 import com.pulsetimer.data.entity.TemplateEntity
 import com.pulsetimer.service.TimerService
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -19,6 +21,12 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+/**
+ * Суффикс имени копии интервала. Вынесен в константу, потому что то же значение
+ * участвует в «откате» уже добавленного суффикса при повторном дублировании.
+ */
+private const val DUPLICATE_SUFFIX = " (копия)"
 
 class TimerViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -73,7 +81,9 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addTemplate(name: String, description: String) {
         viewModelScope.launch {
-            val id = dao.insertTemplate(TemplateEntity(name = name, description = description))
+            val id = dao.insertTemplateWithNextSortOrder(
+                TemplateEntity(name = name, description = description)
+            )
             _recentlyAddedTemplateId.value = id
         }
     }
@@ -91,6 +101,33 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteTemplate(template: TemplateEntity) {
         viewModelScope.launch { dao.deleteTemplate(template) }
+    }
+
+    /**
+     * Перемещение тренировки по списку на одну позицию: `-1` — выше, `+1` — ниже.
+     *
+     * Список из БД уже отсортирован «сверху вниз» (`sortOrder DESC`), поэтому
+     * индексы в нём и есть визуальный порядок. После обмена нумерация
+     * нормализуется в диапазон `0..n-1` — иначе значения росли бы при каждом
+     * перемещении и рано или поздно переполнили бы Int.
+     */
+    fun moveTemplate(templateId: Long, direction: Int) {
+        if (direction != -1 && direction != 1) return
+        viewModelScope.launch {
+            val orderedTemplates = dao.getAllTemplates().first().toMutableList()
+            val currentIndex = orderedTemplates.indexOfFirst { it.id == templateId }
+            val targetIndex = currentIndex + direction
+            if (currentIndex == -1 || targetIndex !in orderedTemplates.indices) return@launch
+
+            val movedTemplate = orderedTemplates.removeAt(currentIndex)
+            orderedTemplates.add(targetIndex, movedTemplate)
+            val lastOrder = orderedTemplates.lastIndex
+            dao.reorderTemplates(
+                orderedTemplates.mapIndexed { index, template ->
+                    template.copy(sortOrder = lastOrder - index)
+                }
+            )
+        }
     }
 
     fun updateTemplate(template: TemplateEntity) {
@@ -140,6 +177,37 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Дублирование интервала внутри той же тренировки.
+     *
+     * Копия вставляется сразу под оригиналом и получает имя с суффиксом
+     * «(копия)»; перед добавлением суффикса он снимается, иначе дубликат
+     * дубликата превращался бы в «X (копия) (копия) (копия)».
+     * Копируются все настройки: длительность, цвет, фон и мелодия.
+     * После вставки порядковые номера нормализуются в `0..n-1`, чтобы в
+     * `orderIndex` не оставалось «дыр» и дублей.
+     */
+    fun duplicateInterval(templateId: Long, intervalId: Long) {
+        viewModelScope.launch {
+            val intervals = dao.getIntervalsByTemplateId(templateId).first()
+            val sourceIndex = intervals.indexOfFirst { it.id == intervalId }
+            if (sourceIndex == -1) return@launch
+
+            val source = intervals[sourceIndex]
+            dao.insertInterval(
+                source.copy(
+                    id = 0L,
+                    name = source.name.removeSuffix(DUPLICATE_SUFFIX) + DUPLICATE_SUFFIX,
+                    orderIndex = sourceIndex + 1
+                )
+            )
+            val updated = dao.getIntervalsByTemplateId(templateId).first()
+            dao.reorderIntervals(
+                updated.mapIndexed { index, interval -> interval.copy(orderIndex = index) }
+            )
+        }
+    }
+
     fun deleteInterval(interval: IntervalEntity) {
         viewModelScope.launch { dao.deleteInterval(interval) }
     }
@@ -151,6 +219,15 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteSessionLog(log: SessionLogEntity) {
         viewModelScope.launch { dao.deleteSessionLogById(log.id) }
     }
+
+    /**
+     * Построчный лог интервалов конкретной сессии — для экрана деталей.
+     *
+     * Flow отдаётся как есть, без `stateIn`: подписка живёт ровно столько,
+     * сколько открыт экран деталей, и кешировать между открытиями нечего.
+     */
+    fun sessionIntervalLogs(sessionLogId: Long): Flow<List<SessionIntervalLogEntity>> =
+        dao.getSessionIntervalLogsBySessionId(sessionLogId)
 
     fun clearSessionHistory() {
         viewModelScope.launch { dao.clearAllSessionLogs() }

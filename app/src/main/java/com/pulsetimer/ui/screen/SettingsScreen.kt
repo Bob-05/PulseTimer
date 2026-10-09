@@ -112,7 +112,8 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onShowOnboarding: () -> Unit,
     onOpenPrivacy: () -> Unit,
-    onOpenTerms: () -> Unit
+    onOpenTerms: () -> Unit,
+    onOpenSessionDetail: (Long) -> Unit
 ) {
     val context = LocalContext.current
     val settings by AppSettingsStore.settings.collectAsStateWithLifecycle()
@@ -537,6 +538,17 @@ fun SettingsScreen(
                         subtitle = "Повторно посмотреть инструкцию по работе с приложением",
                         onClick = onShowOnboarding
                     )
+                    NavigationCard(
+                        emoji = "🎯",
+                        title = "Интерактивное обучение",
+                        subtitle = "Подсказки с подсветкой прямо на главном экране",
+                        onClick = {
+                            // Обучение живёт на главном экране: ставим флаг и
+                            // возвращаемся туда — MainScreen сам покажет шаги.
+                            AppSettingsStore.update { it.copy(tutorialRequested = true) }
+                            onBack()
+                        }
+                    )
 
                     SectionTitle("Документы")
                     NavigationCard(
@@ -602,6 +614,7 @@ fun SettingsScreen(
                             )
                             SessionLogCard(
                                 log = log,
+                                onOpen = { onOpenSessionDetail(log.id) },
                                 onDelete = { pendingDeleteLog = log },
                                 modifier = Modifier.graphicsLayer {
                                     scaleX = scale
@@ -948,11 +961,14 @@ private fun NavigationCard(
 @Composable
 private fun SessionLogCard(
     log: SessionLogEntity,
+    onOpen: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpen),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
@@ -980,15 +996,37 @@ private fun SessionLogCard(
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
-                if (log.completedAt == null) "Тренировка остановлена" else "Завершена",
+                sessionStatusText(log),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (log.completedAt == null) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
+            )
+            Text(
+                "Длительность: ${log.totalDurationSeconds} сек",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            log.completedAt?.let {
+            if (log.totalIntervals > 0) {
                 Text(
-                    "Длительность: ${log.totalDurationSeconds} сек",
+                    "Интервалов пройдено: ${log.completedIntervals} из ${log.totalIntervals}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Подробнее",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
                 )
             }
         }

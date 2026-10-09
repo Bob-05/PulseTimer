@@ -46,6 +46,7 @@ import com.pulsetimer.ui.screen.LegalDocumentScreen
 import com.pulsetimer.ui.screen.LaunchAnimationScreen
 import com.pulsetimer.ui.screen.MainScreen
 import com.pulsetimer.ui.screen.OnboardingScreen
+import com.pulsetimer.ui.screen.SessionDetailScreen
 import com.pulsetimer.ui.screen.SettingsScreen
 import com.pulsetimer.ui.theme.PulseTimerTheme
 
@@ -309,7 +310,25 @@ class MainActivity : ComponentActivity() {
                                                 Screen.LegalDocument.TYPE_TERMS
                                             )
                                         )
+                                    },
+                                    onOpenSessionDetail = { logId ->
+                                        navController.navigate(
+                                            Screen.SessionDetail.routeFor(logId)
+                                        )
                                     }
+                                )
+                            }
+
+                            composable(
+                                route = "${Screen.SessionDetail.route}/" +
+                                    "{${Screen.SessionDetail.ARG_LOG_ID}}"
+                            ) { backStackEntry ->
+                                val logId = backStackEntry.arguments
+                                    ?.getString(Screen.SessionDetail.ARG_LOG_ID)
+                                    ?.toLongOrNull() ?: 0L
+                                SessionDetailScreen(
+                                    logId = logId,
+                                    onBack = { navController.popBackStack() }
                                 )
                             }
 

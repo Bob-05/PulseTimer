@@ -23,7 +23,15 @@ data class AppSettings(
     val musicUri: String? = null,
     val onboardingCompleted: Boolean = false,
     /** Пользователь явно принял Политику и Соглашение на экране согласия. */
-    val legalConsentAccepted: Boolean = false
+    val legalConsentAccepted: Boolean = false,
+    /** Интерактивное обучение (coach marks) на главном экране пройдено. */
+    val tutorialCompleted: Boolean = false,
+    /**
+     * Запрос на запуск обучения из «Настроек».
+     * Флаг, а не колбэк: обучение живёт на главном экране, куда мы возвращаемся
+     * через popBackStack, и передать туда событие напрямую нечем.
+     */
+    val tutorialRequested: Boolean = false
 )
 
 object AppSettingsStore {
@@ -84,6 +92,8 @@ object AppSettingsStore {
                 putString("musicUri", updated.musicUri)
                 putBoolean("onboardingCompleted", updated.onboardingCompleted)
                 putBoolean("legalConsentAccepted", updated.legalConsentAccepted)
+                putBoolean("tutorialCompleted", updated.tutorialCompleted)
+                putBoolean("tutorialRequested", updated.tutorialRequested)
             }
             mutableSettings.value = updated.copy(
                 soundVolume = updated.soundVolume.coerceIn(0f, 1f),
@@ -106,6 +116,8 @@ object AppSettingsStore {
         intervalAnimation = prefs.getString("intervalAnimation", "SLIDE") ?: "SLIDE",
         musicUri = prefs.getString("musicUri", null),
         onboardingCompleted = prefs.getBoolean("onboardingCompleted", false),
-        legalConsentAccepted = prefs.getBoolean("legalConsentAccepted", false)
+        legalConsentAccepted = prefs.getBoolean("legalConsentAccepted", false),
+        tutorialCompleted = prefs.getBoolean("tutorialCompleted", false),
+        tutorialRequested = prefs.getBoolean("tutorialRequested", false)
     )
 }
