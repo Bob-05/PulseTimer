@@ -27,13 +27,58 @@ class TutorialStepsTest {
                 TutorialTargets.EDITOR_BACK,
                 TutorialTargets.SETTINGS_ICON,
                 TutorialTargets.SETTINGS_BACK,
-                TutorialTargets.START
+                TutorialTargets.START,
+                TutorialTargets.EXECUTION_PAUSE,
+                TutorialTargets.EXECUTION_RESUME
             ),
             pressSteps.map { step -> step.targetKey }
         )
-        // У шага-перехода всегда есть подпись кнопки: иначе пользователь не
-        // поймёт, что «Далее» откроет другой экран.
+        // У шага-перехода всегда есть подпись кнопки: иначе не понять, что
+        // «Далее» нажмёт элемент за пользователя, а не просто откроет подсказку.
         assertTrue(pressSteps.all { step -> step.actionLabel != null })
+    }
+
+    @Test
+    fun tourTellsAboutWorkoutProcessItself() {
+        val keys = TutorialSteps.guidedTour(hasWorkouts = true)
+            .map { step -> step.targetKey }
+
+        // Тур не заканчивается запуском: отсчёт, перелистывание интервалов,
+        // управление и завершение рассказываются отдельными шагами.
+        assertTrue(TutorialTargets.EXECUTION_TIMER in keys)
+        assertTrue(TutorialTargets.EXECUTION_SWIPE in keys)
+        assertTrue(TutorialTargets.EXECUTION_CONTROLS in keys)
+        assertTrue(TutorialTargets.EXECUTION_CLOSE in keys)
+
+        // Пауза и продолжение — соседние шаги: обучение само останавливает
+        // отсчёт, а следующим шагом возвращает его.
+        val pauseIndex = keys.indexOf(TutorialTargets.EXECUTION_PAUSE)
+        assertTrue(pauseIndex > 0)
+        assertEquals(TutorialTargets.EXECUTION_RESUME, keys[pauseIndex + 1])
+    }
+
+    @Test
+    fun standaloneWorkoutHintsTeachTheSameProcess() {
+        val keys = TutorialSteps.EXECUTION_SCREEN.map { step -> step.targetKey }
+
+        // Подсказки при первом заходе на экран отсчёта не беднее тура.
+        assertTrue(TutorialTargets.EXECUTION_TIMER in keys)
+        assertTrue(TutorialTargets.EXECUTION_SWIPE in keys)
+        assertTrue(TutorialTargets.EXECUTION_PAUSE in keys)
+        assertTrue(TutorialTargets.EXECUTION_RESUME in keys)
+        assertTrue(TutorialTargets.EXECUTION_CLOSE in keys)
+    }
+
+    @Test
+    fun workoutStepsUseLighterScrim() {
+        val workoutSteps = TutorialSteps.guidedTour(hasWorkouts = true)
+            .filter { step -> step.screenPrefix == TutorialTargets.PREFIX_EXECUTION }
+
+        assertTrue(workoutSteps.isNotEmpty())
+        // За подсказкой на экране отсчёта должно быть видно бегущий таймер.
+        assertTrue(
+            workoutSteps.all { step -> step.scrimAlpha == LIGHT_TUTORIAL_SCRIM_ALPHA }
+        )
     }
 
     @Test

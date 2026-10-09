@@ -98,6 +98,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.ui.tutorial.LIGHT_TUTORIAL_SCRIM_ALPHA
 import com.pulsetimer.ui.tutorial.TutorialController
+import com.pulsetimer.ui.tutorial.TutorialScreenTargets
 import com.pulsetimer.ui.tutorial.TutorialSteps
 import com.pulsetimer.ui.tutorial.TutorialTargetRegistry
 import com.pulsetimer.ui.tutorial.TutorialTargets
@@ -151,6 +152,34 @@ fun ExecutionScreen(
         startDelayMillis = 400L,
         scrimAlpha = LIGHT_TUTORIAL_SCRIM_ALPHA
     )
+
+    // Тур «нажимает» паузу за пользователя, чтобы показать остановку отсчёта.
+    // Отсчёт на паузе стоит, поэтому вернуть его обучение обязано само: иначе
+    // пользователь, закрывший подсказки на шаге паузы, оставил бы тренировку
+    // стоять. Свою паузу пользователя обучение не трогает.
+    var pausedByTutorial by remember { mutableStateOf(false) }
+    TutorialScreenTargets(
+        registry = tutorial.targets,
+        prefix = TutorialTargets.PREFIX_EXECUTION,
+        actions = mapOf(
+            TutorialTargets.EXECUTION_PAUSE to {
+                pausedByTutorial = !timerState.isPaused
+                if (!timerState.isPaused) viewModel.pauseTimer()
+            },
+            TutorialTargets.EXECUTION_RESUME to {
+                if (pausedByTutorial) {
+                    pausedByTutorial = false
+                    viewModel.resumeTimer()
+                }
+            }
+        )
+    )
+    LaunchedEffect(tutorial.isRunning, pausedByTutorial) {
+        if (pausedByTutorial && !tutorial.isRunning) {
+            pausedByTutorial = false
+            viewModel.resumeTimer()
+        }
+    }
 
     // Тренировка закончилась, а подсказки остались — закрываем их, иначе они
     // висели бы поверх экрана «Поздравляем».
@@ -590,7 +619,13 @@ private fun PhaseFullScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onClose) {
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier.tutorialTarget(
+                        tutorialTargets,
+                        TutorialTargets.EXECUTION_CLOSE
+                    )
+                ) {
                     Icon(
                         Icons.Default.Close, "Закрыть",
                         tint = Color.White, modifier = Modifier.size(32.dp)
@@ -662,8 +697,14 @@ private fun PhaseFullScreen(
 
                 IconButton(
                     onClick = onPauseToggle,
+                    // Одна кнопка — две цели обучения: на паузе обучение «нажимает»
+                    // её, чтобы показать остановку отсчёта, а следующим шагом —
+                    // чтобы вернуть отсчёт. Свайп и тапы по слою до кнопки не
+                    // доходят, поэтому показывает процесс именно обучение.
                     modifier = Modifier
                         .size(80.dp)
+                        .tutorialTarget(tutorialTargets, TutorialTargets.EXECUTION_PAUSE)
+                        .tutorialTarget(tutorialTargets, TutorialTargets.EXECUTION_RESUME)
                         .background(Color.White.copy(alpha = 0.3f), CircleShape)
                 ) {
                     Icon(
@@ -692,7 +733,11 @@ private fun PhaseFullScreen(
             Text(
                 text = "Свайп влево/вправо — перелистывание",
                 color = Color.White.copy(alpha = 0.6f),
-                style = MaterialTheme.typography.labelLarge
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.tutorialTarget(
+                    tutorialTargets,
+                    TutorialTargets.EXECUTION_SWIPE
+                )
             )
         }
     }

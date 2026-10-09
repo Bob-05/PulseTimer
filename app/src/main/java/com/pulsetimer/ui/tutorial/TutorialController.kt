@@ -5,7 +5,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberUpdatedState
@@ -30,8 +29,9 @@ import kotlin.math.abs
  * Перед каждым шагом обучение само приводит экран в нужное состояние: переходит
  * на другой экран (нажимая за пользователя нужную кнопку), раскрывает группы
  * настроек, прокручивает список к цели и центрирует её по середине экрана — и
- * только после этого плавно показывает подсказку. Пока идёт подготовка, слой
- * прозрачен, но нажатия перехватывает: интерфейс под обучением «не живой».
+ * только после этого плавно показывает подсказку. Пока идёт подготовка,
+ * затемнение уже видно (по нему понятно, что приложение под управлением
+ * обучения), нажатия перехватываются, а тап по фону сокращает ожидание.
  *
  * Реестр целей общий: координаты у всех экранов в одной оконной системе, а
  * ключи разведены префиксами (`main.`, `settings.`, `editor.`, `execution.`).
@@ -52,14 +52,21 @@ class TutorialController(private val scope: CoroutineScope) {
     var stepIndex: Int by mutableIntStateOf(0)
         private set
 
-    /** Прозрачность затемнения: на экране тренировки она ниже, чтобы видеть таймер. */
-    var scrimAlpha: Float by mutableFloatStateOf(DEFAULT_TUTORIAL_SCRIM_ALPHA)
-        private set
+    /** Затемнение по умолчанию; шаг может переопределить его ([TutorialStep.scrimAlpha]). */
+    private var baseScrimAlpha: Float = DEFAULT_TUTORIAL_SCRIM_ALPHA
+
+    /**
+     * Прозрачность затемнения текущего шага: на экране тренировки она ниже, чтобы
+     * видеть таймер под подсказкой.
+     */
+    val scrimAlpha: Float
+        get() = currentStep?.scrimAlpha ?: baseScrimAlpha
 
     /**
      * `false` — обучение ведёт пользователя: переходит на другой экран,
-     * раскрывает блоки и прокручивает список. Подсказка и затемнение в это
-     * время прозрачны, а нажатия по-прежнему перехватываются.
+     * раскрывает блоки и прокручивает список. Подсказка в это время не показана
+     * (затемнение уже видно), нажатия перехватываются, а тап по фону сокращает
+     * ожидание.
      */
     var isRevealed: Boolean by mutableStateOf(false)
         private set
@@ -90,6 +97,13 @@ class TutorialController(private val scope: CoroutineScope) {
     private var awaitingScreen = false
 
     /**
+     * Пользователь тапнул, пока шаг готовился: обучение перестаёт ждать разметку и
+     * показывает подсказку сразу. Иначе между шагами копится «мёртвая» пауза, пока
+     * доигрывают прокрутка и раскрытие блоков.
+     */
+    private var hurryUp = false
+
+    /**
      * Начинает обучение.
      *
      * Повторный вызов во время идущего обучения игнорируется: два набора шагов
@@ -103,7 +117,7 @@ class TutorialController(private val scope: CoroutineScope) {
     ) {
         if (isRunning) return
         this.onFinish = onFinish
-        this.scrimAlpha = scrimAlpha
+        baseScrimAlpha = scrimAlpha
         this.steps = steps
         stepIndex = 0
         isRevealed = false
@@ -116,8 +130,14 @@ class TutorialController(private val scope: CoroutineScope) {
      * цель за пользователя и только потом двигается к следующему шагу.
      */
     fun next() {
-        if (!isRunning || !isRevealed) return
+        if (!isRunning) return
         val step = currentStep ?: return
+        // Шаг ещё готовится: тап не пропускаем, а ускоряем его — так слой отвечает
+        // на нажатие, вместо того чтобы выглядеть зависшим.
+        if (!isRevealed) {
+            if (!awaitingScreen) hurryUp = true
+            return
+        }
         if (step.pressTarget && step.targetKey != null) {
             pressTarget(step)
             return
@@ -127,7 +147,12 @@ class TutorialController(private val scope: CoroutineScope) {
 
     /** Шаг назад: доступен, пока предыдущий шаг относится к тому же экрану. */
     fun back() {
-        if (!isRunning || !isRevealed || !canGoBack) return
+        if (!isRunning) return
+        if (!isRevealed) {
+            if (!awaitingScreen) hurryUp = true
+            return
+        }
+        if (!canGoBack) return
         goTo(stepIndex - 1)
     }
 
@@ -140,6 +165,7 @@ class TutorialController(private val scope: CoroutineScope) {
         if (!isRunning) return
         prepareJob?.cancel()
         prepareJob = null
+        hurryUp = false
         val callback = onFinish
         onFinish = {}
         steps = emptyList()
@@ -184,6 +210,8 @@ class TutorialController(private val scope: CoroutineScope) {
     private fun prepare() {
         val afterScreenChange = awaitingScreen
         awaitingScreen = false
+        // Новый шаг начинаем ждать терпеливо: «ускорение» относилось к прошлому.
+        hurryUp = false
         prepareJob?.cancel()
         prepareJob = scope.launch {
             var timeout = if (afterScreenChange) {
@@ -206,6 +234,8 @@ class TutorialController(private val scope: CoroutineScope) {
 
     /** @return true, если шаг показан: дальше ждать нечего. */
     private suspend fun prepareStep(step: TutorialStep, timeoutMillis: Long): Boolean {
+        // «Ускорение» относится к одному шагу: следующий ждём заново.
+        hurryUp = false
         val key = step.targetKey ?: run {
             reveal()
             return true
@@ -228,7 +258,7 @@ class TutorialController(private val scope: CoroutineScope) {
     /** Ждёт, пока экран зарегистрирует цель или план её показа. */
     private suspend fun awaitRegistered(key: String, timeoutMillis: Long): Boolean =
         withTimeoutOrNull(timeoutMillis) {
-            while (targets.bounds(key) == null && targets.plan(key) == null) {
+            while (!hurryUp && targets.bounds(key) == null && targets.plan(key) == null) {
                 delay(LAYOUT_POLL_MILLIS)
             }
             true
@@ -247,7 +277,7 @@ class TutorialController(private val scope: CoroutineScope) {
             var previous: Rect? = targets.bounds(key)
             var stableFrames = 0
             var waitedMillis = 0L
-            while (stableFrames < STABLE_FRAMES) {
+            while (stableFrames < STABLE_FRAMES && !hurryUp) {
                 delay(LAYOUT_POLL_MILLIS)
                 waitedMillis += LAYOUT_POLL_MILLIS
                 val current = targets.bounds(key)
@@ -261,7 +291,8 @@ class TutorialController(private val scope: CoroutineScope) {
                         previous = null
                     }
 
-                    current == previous -> stableFrames++
+                    previous?.let { last -> isInPlace(current, last) } == true ->
+                        stableFrames++
 
                     else -> {
                         stableFrames = 0
@@ -271,6 +302,18 @@ class TutorialController(private val scope: CoroutineScope) {
             }
             true
         } ?: false
+
+    /**
+     * Цель стоит на месте: сравниваем положение с точностью до пикселя, а не
+     * прямоугольник целиком.
+     *
+     * Иначе цель, у которой меняется только размер — например, таймер тренировки:
+     * цифры шириной в один символ раз в секунду, — считалась бы движущейся, и
+     * обучение перед каждой подсказкой выжидало бы полный таймаут раскладки.
+     */
+    private fun isInPlace(current: Rect, previous: Rect): Boolean =
+        abs(current.left - previous.left) <= STABILITY_TOLERANCE_PX &&
+            abs(current.top - previous.top) <= STABILITY_TOLERANCE_PX
 
     /**
      * Доводит цель до середины экрана: подсказка встаёт рядом с подсветкой, а не
@@ -292,19 +335,31 @@ class TutorialController(private val scope: CoroutineScope) {
 }
 
 /** Пауза между проверками разметки: примерно кадр при 60 Гц. */
-private const val LAYOUT_POLL_MILLIS = 32L
+private const val LAYOUT_POLL_MILLIS = 16L
 
-/** Сколько подряд одинаковых кадров считаем «разметка устоялась». */
-private const val STABLE_FRAMES = 3
+/** Сколько подряд устойчивых кадров считаем «разметка устоялась». */
+private const val STABLE_FRAMES = 2
 
-/** Сколько ждём цель на текущем экране, прежде чем считать шаг недоступным. */
-private const val TARGET_TIMEOUT_MILLIS = 900L
+/**
+ * Насколько цель может сдвинуться и всё ещё считаться стоящей на месте (в
+ * пикселях). Допуск нужен для целей, которые «дышат» размером: таймер тренировки
+ * меняет ширину цифр, и по строгому сравнению прямоугольников обучение каждый раз
+ * ждало бы полный таймаут раскладки.
+ */
+private const val STABILITY_TOLERANCE_PX = 1f
+
+/**
+ * Сколько ждём цель на текущем экране, прежде чем считать шаг недоступным.
+ * Значения подобраны так, чтобы пауза между подсказками не читалась как
+ * зависание: пользователь всё это время видит затемнение, но нажатия не проходят.
+ */
+private const val TARGET_TIMEOUT_MILLIS = 600L
 
 /** Сколько ждём цель после перехода на другой экран — экран должен разложиться. */
-private const val SCREEN_CHANGE_TIMEOUT_MILLIS = 1800L
+private const val SCREEN_CHANGE_TIMEOUT_MILLIS = 1500L
 
 /** Верхняя граница ожидания прокрутки и центрирования цели. */
-private const val LAYOUT_SETTLE_TIMEOUT_MILLIS = 1600L
+private const val LAYOUT_SETTLE_TIMEOUT_MILLIS = 800L
 
 /** Меньше этого смещения цель уже считается стоящей по центру (в пикселях). */
 private const val CENTER_TOLERANCE_PX = 24f

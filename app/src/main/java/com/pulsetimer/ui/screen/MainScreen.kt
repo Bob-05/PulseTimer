@@ -201,8 +201,15 @@ private fun MainScreenScaffold(
     // переходах открывает редактор, настройки или запускает тренировку.
     val firstCardPlan = remember(pagerState) {
         TutorialScrollPlan(
+            // Прокрутка фиксированной длительности: обучение ждёт её окончания, а
+            // пружина по умолчанию растягивает паузу на несколько страниц.
             prepare = {
-                if (pagerState.pageCount > 0) pagerState.animateScrollToPage(0)
+                if (pagerState.pageCount > 0) {
+                    pagerState.animateScrollToPage(
+                        page = 0,
+                        animationSpec = tween(durationMillis = 240)
+                    )
+                }
             }
         )
     }

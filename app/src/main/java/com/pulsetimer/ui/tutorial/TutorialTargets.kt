@@ -1,5 +1,8 @@
 package com.pulsetimer.ui.tutorial
 
+import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.mutableStateMapOf
@@ -57,6 +60,18 @@ object TutorialTargets {
     // --- Экран идущей тренировки ---
     const val EXECUTION_TIMER = "execution.timer"
     const val EXECUTION_CONTROLS = "execution.controls"
+
+    /** Подпись «свайп влево/вправо»: по ней обучение рассказывает о перелистывании. */
+    const val EXECUTION_SWIPE = "execution.swipe"
+
+    /** Кнопка паузы: обучение «нажимает» её, чтобы показать остановку отсчёта. */
+    const val EXECUTION_PAUSE = "execution.pause"
+
+    /** Та же кнопка во втором состоянии («Продолжить»): отсчёт возвращает обучение. */
+    const val EXECUTION_RESUME = "execution.resume"
+
+    /** «✕» в углу экрана: завершение тренировки с сохранением в историю. */
+    const val EXECUTION_CLOSE = "execution.close"
 }
 
 /**
@@ -94,8 +109,21 @@ fun lazyListScrollPlan(
 ): TutorialScrollPlan = TutorialScrollPlan(
     prepare = prepare,
     scrollToItem = { state.animateScrollToItem(index) },
-    scrollBy = { offset -> state.animateScrollBy(offset) }
+    scrollBy = { offset -> state.animateScrollBy(offset, ScrollAnimationSpec) }
 )
+
+/** Сколько идёт доводка цели к середине экрана — та же, что и прокрутка списка. */
+private const val SCROLL_ANIMATION_MILLIS = 240
+
+/**
+ * Спецификация прокрутки, которой обучение доводит цель до нужного места.
+ *
+ * Пружина по умолчанию «дотягивает» список за разное время в зависимости от
+ * расстояния, а обучение ждёт окончания анимации: фиксированный быстрый tween
+ * делает паузу между подсказками предсказуемой и короткой.
+ */
+private val ScrollAnimationSpec: AnimationSpec<Float> =
+    tween(durationMillis = SCROLL_ANIMATION_MILLIS, easing = FastOutSlowInEasing)
 
 /**
  * Координаты целей обучения (в координатах окна) плюс то, как обучение само

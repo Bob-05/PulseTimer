@@ -14,6 +14,9 @@ import com.pulsetimer.data.AppSettings
  *   а по кнопке «Далее» само «нажимает» её, чтобы провести пользователя на
  *   другой экран (открыть редактор, настройки, запустить тренировку).
  * @param actionLabel подпись основной кнопки на шаге-переходе; `null` — «Далее».
+ * @param scrimAlpha своя прозрачность затемнения на этом шаге; `null` — общая для
+ *   всего обучения. Экран идущей тренировки просит затемнение светлее, иначе за
+ *   ним не разглядеть бегущий таймер.
  */
 data class TutorialStep(
     val targetKey: String?,
@@ -21,7 +24,8 @@ data class TutorialStep(
     val title: String,
     val text: String,
     val pressTarget: Boolean = false,
-    val actionLabel: String? = null
+    val actionLabel: String? = null,
+    val scrimAlpha: Float? = null
 )
 
 /**
@@ -46,14 +50,21 @@ internal val TutorialStep.screenPrefix: String
  */
 object TutorialSteps {
 
-    /** Финальный шаг: подсказка по центру экрана, без привязки к элементу. */
+    /**
+     * Финальный шаг: подсказка по центру экрана, без привязки к элементу.
+     *
+     * Тур доходит до идущей тренировки, поэтому и здесь затемнение светлее
+     * ([LIGHT_TUTORIAL_SCRIM_ALPHA]): за подсказкой должен быть виден таймер.
+     */
     private val tourEnd = TutorialStep(
         targetKey = null,
         emoji = "✅",
         title = "Готово!",
-        text = "Результаты сохраняются в «Настройки → История тренировок»: нажмите " +
-            "на запись, чтобы увидеть разбор по интервалам. Повторить обучение можно " +
-            "там же, в разделе «Справка»."
+        text = "Отсчёт продолжается: тренировку можно вести по часам или по " +
+            "голосовым подсказкам. Когда интервалы закончатся, появится экран " +
+            "результатов, а запись попадёт в «Настройки → История тренировок». " +
+            "Повторить обучение можно там же, в разделе «Справка».",
+        scrimAlpha = LIGHT_TUTORIAL_SCRIM_ALPHA
     )
 
     /**
@@ -237,24 +248,8 @@ object TutorialSteps {
                 actionLabel = "Начать тренировку"
             )
         )
-        add(
-            TutorialStep(
-                targetKey = TutorialTargets.EXECUTION_TIMER,
-                emoji = "⏱",
-                title = "Идёт отсчёт",
-                text = "Название интервала, его номер и время до конца. Смена " +
-                    "интервала сопровождается сигналом, вибрацией и голосом."
-            )
-        )
-        add(
-            TutorialStep(
-                targetKey = TutorialTargets.EXECUTION_CONTROLS,
-                emoji = "⏯",
-                title = "Управление",
-                text = "Пауза, «Пропустить» и возврат к предыдущему интервалу, а «✕» " +
-                    "завершает тренировку и сохраняет её в историю."
-            )
-        )
+        // --- Идущая тренировка: отсчёт, перелистывание, пауза, завершение ---
+        addAll(workoutProcessSteps())
         add(tourEnd)
     }
 
@@ -351,30 +346,90 @@ object TutorialSteps {
         )
     )
 
-    /** Экран идущей тренировки: короткий набор, таймер при этом не останавливается. */
-    val EXECUTION_SCREEN: List<TutorialStep> = listOf(
-        TutorialStep(
-            targetKey = null,
-            emoji = "🏃",
-            title = "Тренировка идёт",
-            text = "Таймер продолжает работать даже при выключенном экране. " +
-                "Это обучение не останавливает отсчёт — можно двигаться дальше " +
-                "или сразу нажать «Пропустить»."
-        ),
+    /** Экран идущей тренировки: отсчёт и управление, таймер при этом не встаёт. */
+    val EXECUTION_SCREEN: List<TutorialStep> = buildList {
+        add(
+            TutorialStep(
+                targetKey = null,
+                emoji = "🏃",
+                title = "Тренировка идёт",
+                text = "Покажу, как вести тренировку и что делать между интервалами. " +
+                    "Обучение не останавливает отсчёт — можно двигаться дальше или " +
+                    "сразу нажать «Пропустить».",
+                scrimAlpha = LIGHT_TUTORIAL_SCRIM_ALPHA
+            )
+        )
+        addAll(workoutProcessSteps())
+    }
+
+    /**
+     * Шаги про саму тренировку: отсчёт, перелистывание интервалов, управление,
+     * пауза и завершение.
+     *
+     * Набор общий для сквозного тура и для подсказок при первом заходе на экран
+     * отсчёта: процесс тренировки должен рассказываться одинаково. Два шага —
+     * переходы: обучение само «нажимает» паузу, а следующим шагом возвращает
+     * отсчёт, поэтому паузу пользователь не только читает, но и видит.
+     *
+     * Затемнение тут светлее ([LIGHT_TUTORIAL_SCRIM_ALPHA]): таймер должен
+     * оставаться различимым под подсказкой.
+     */
+    private fun workoutProcessSteps(): List<TutorialStep> = listOf(
         TutorialStep(
             targetKey = TutorialTargets.EXECUTION_TIMER,
             emoji = "⏱",
-            title = "Текущий интервал",
+            title = "Идёт отсчёт",
             text = "Название интервала, его номер и время до конца. Смена интервала " +
-                "сопровождается сигналом, вибрацией и голосовой подсказкой."
+                "сопровождается сигналом, вибрацией и голосовой подсказкой, а сам " +
+                "отсчёт не останавливается даже при выключенном экране.",
+            scrimAlpha = LIGHT_TUTORIAL_SCRIM_ALPHA
+        ),
+        TutorialStep(
+            targetKey = TutorialTargets.EXECUTION_SWIPE,
+            emoji = "👉",
+            title = "Перелистывание интервалов",
+            text = "Свайп влево пропускает интервал, вправо — возвращает предыдущий. " +
+                "Смена идёт с выбранным переходом: меняются цвет, фон, мелодия и " +
+                "видео, если оно задано у интервала.",
+            scrimAlpha = LIGHT_TUTORIAL_SCRIM_ALPHA
         ),
         TutorialStep(
             targetKey = TutorialTargets.EXECUTION_CONTROLS,
             emoji = "⏯",
             title = "Управление",
-            text = "Пауза, «Пропустить» и возврат к предыдущему интервалу. " +
-                "Свайп влево/вправо листает интервалы, а «✕» завершает тренировку " +
-                "и сохраняет её в историю."
+            text = "Слева — возврат к предыдущему интервалу, в центре — пауза, " +
+                "справа — «Пропустить». Те же кнопки есть в карточке уведомления, " +
+                "так что тренировкой можно управлять с выключенным экраном.",
+            scrimAlpha = LIGHT_TUTORIAL_SCRIM_ALPHA
+        ),
+        TutorialStep(
+            targetKey = TutorialTargets.EXECUTION_PAUSE,
+            emoji = "⏸",
+            title = "Проверим паузу",
+            text = "Нажму паузу за вас: отсчёт остановится, а оставшееся время " +
+                "интервала сохранится — на паузе можно подтянуть ремни или допить " +
+                "воду.",
+            pressTarget = true,
+            actionLabel = "Пауза",
+            scrimAlpha = LIGHT_TUTORIAL_SCRIM_ALPHA
+        ),
+        TutorialStep(
+            targetKey = TutorialTargets.EXECUTION_RESUME,
+            emoji = "▶️",
+            title = "Продолжаем отсчёт",
+            text = "Возвращаю отсчёт: время интервала не сбросилось — таймер " +
+                "продолжает с той же секунды.",
+            pressTarget = true,
+            actionLabel = "Продолжить",
+            scrimAlpha = LIGHT_TUTORIAL_SCRIM_ALPHA
+        ),
+        TutorialStep(
+            targetKey = TutorialTargets.EXECUTION_CLOSE,
+            emoji = "✕",
+            title = "Завершение тренировки",
+            text = "«✕» в углу останавливает тренировку и сохраняет её: план, факт и " +
+                "пропуски потом видно в «Настройки → История тренировок».",
+            scrimAlpha = LIGHT_TUTORIAL_SCRIM_ALPHA
         )
     )
 }

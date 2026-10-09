@@ -1,6 +1,7 @@
 package com.pulsetimer.ui.tutorial
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector4D
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -44,6 +45,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -93,9 +95,11 @@ const val LIGHT_TUTORIAL_SCRIM_ALPHA = 0.55f
  * Показом управляет [TutorialController]: он сначала доводит экран до нужного
  * состояния (переход, раскрытие блоков, прокрутка и центрирование цели) и лишь
  * потом выставляет [TutorialController.isRevealed] — подсказка проявляется
- * плавно, уже над нужным местом. Тап по затемнению переводит на следующий шаг:
- * целиться в кнопку не нужно. При этом нажатия не доходят до интерфейса под
- * слоем — случайный тап не запустит тренировку и не удалит карточку.
+ * плавно, уже над нужным местом. Затемнение при этом видно с первого кадра
+ * подготовки, так что слой не выглядит зависшим. Тап по затемнению переводит на
+ * следующий шаг: целиться в кнопку не нужно, а если шаг ещё готовится — тап
+ * сокращает ожидание. При этом нажатия не доходят до интерфейса под слоем —
+ * случайный тап не запустит тренировку и не удалит карточку.
  */
 @Composable
 fun CoachMarkOverlay(
@@ -112,9 +116,20 @@ fun CoachMarkOverlay(
     var overlaySize by remember { mutableStateOf(IntSize.Zero) }
     var tooltipSize by remember { mutableStateOf(IntSize.Zero) }
 
+    // Затемнение проявляется сразу, а подсказка — только когда шаг готов
+    // (см. [TutorialController.isRevealed]). Так видно, что приложение не
+    // зависло, а выполняет переход и прокрутку под управлением обучения.
+    val scrimReveal = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        scrimReveal.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
+        )
+    }
+
     // Подсказка появляется только после подготовки шага: пока обучение
     // переходит на другой экран, раскрывает блоки и прокручивает список, слой
-    // прозрачен — зато нажатия он перехватывает всегда.
+    // показывает только затемнение — зато нажатия он перехватывает всегда.
     val reveal by animateFloatAsState(
         targetValue = if (controller.isRevealed) 1f else 0f,
         animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
@@ -151,8 +166,8 @@ fun CoachMarkOverlay(
         }
 
     // «Дырка» переезжает к новой цели не рывком, а за 280 мс: переход между
-    // шагами читается как перевод фокуса. Во время подготовки шага слой
-    // прозрачен, поэтому анимация успевает закончиться до появления подсказки.
+    // шагами читается как перевод фокуса. Пока шаг готовится, видно только
+    // затемнение, поэтому к моменту показа подсказки «дырка» уже на месте.
     val animatedHole by animateValueAsState(
         targetValue = holeRect ?: Rect.Zero,
         typeConverter = RectToAnimationVector,
@@ -181,7 +196,7 @@ fun CoachMarkOverlay(
                 }
                 fillType = PathFillType.EvenOdd
             }
-            drawPath(scrim, Color.Black.copy(alpha = scrimAlpha * reveal))
+            drawPath(scrim, Color.Black.copy(alpha = scrimAlpha * scrimReveal.value))
             holeToDraw?.let { hole ->
                 drawRoundRect(
                     color = accent.copy(alpha = pulseAlpha * reveal),
@@ -195,7 +210,7 @@ fun CoachMarkOverlay(
 
         // Слой, который съедает нажатия: элементы под обучением «не живые», а
         // тап по фону переводит на следующий шаг. Пока шаг готовится (переход,
-        // прокрутка), нажатия просто не проходят.
+        // прокрутка), нажатия не проходят, но тап сокращает ожидание разметки.
         Box(
             modifier = Modifier
                 .fillMaxSize()
