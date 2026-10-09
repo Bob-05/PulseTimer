@@ -71,7 +71,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.data.entity.IntervalEntity
+import com.pulsetimer.ui.tutorial.TutorialController
+import com.pulsetimer.ui.tutorial.TutorialSteps
+import com.pulsetimer.ui.tutorial.TutorialTargets
+import com.pulsetimer.ui.tutorial.TutorialTrigger
+import com.pulsetimer.ui.tutorial.tutorialTarget
 import com.pulsetimer.viewmodel.TimerViewModel
 import kotlinx.coroutines.delay
 import kotlin.math.absoluteValue
@@ -79,13 +85,29 @@ import kotlin.math.absoluteValue
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun EditorScreen(
+    tutorial: TutorialController,
     viewModel: TimerViewModel = viewModel(),
     templateId: Long,
     onBack: () -> Unit
 ) {
     val selectedTemplate by viewModel.selectedTemplate.collectAsStateWithLifecycle()
     val intervals by viewModel.selectedTemplateIntervals.collectAsStateWithLifecycle()
+    val settings by AppSettingsStore.settings.collectAsStateWithLifecycle()
     val context = LocalContext.current
+
+    // Обучение по редактору — один раз, при первом открытии тренировки.
+    TutorialTrigger(
+        controller = tutorial,
+        steps = TutorialSteps.EDITOR_SCREEN,
+        enabled = !settings.editorTutorialCompleted && settings.tutorialCompleted,
+        prefix = TutorialTargets.PREFIX_EDITOR,
+        onCompleted = {
+            AppSettingsStore.update { it.copy(editorTutorialCompleted = true) }
+        },
+        // Ждём, пока подгрузятся шаблон и интервалы: без них часть шагов
+        // осталась бы без подсветки.
+        startDelayMillis = 900L
+    )
 
     var name by remember(templateId) { mutableStateOf("") }
     var description by remember(templateId) { mutableStateOf("") }
@@ -274,6 +296,10 @@ fun EditorScreen(
                     )
                     FloatingActionButton(
                         onClick = { showAddDialog = true },
+                        modifier = Modifier.tutorialTarget(
+                            tutorial.targets,
+                            TutorialTargets.EDITOR_ADD_INTERVAL
+                        ),
                         containerColor = MaterialTheme.colorScheme.primary
                     ) {
                         Icon(Icons.Default.Add, contentDescription = "Добавить интервал")
@@ -293,7 +319,12 @@ fun EditorScreen(
             item {
                 selectedTemplate?.let { template ->
                     Card(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .tutorialTarget(
+                                tutorial.targets,
+                                TutorialTargets.EDITOR_TEMPLATE
+                            ),
                         shape = RoundedCornerShape(24.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                     ) {
@@ -436,10 +467,30 @@ fun EditorScreen(
                             }
                         }
                     }
+                    // Цели обучения ставим только на первую карточку: у остальных
+                    // координаты перетирали бы подсветку друг друга.
+                    val cardTutorialTarget = if (index == 0) {
+                        Modifier.tutorialTarget(
+                            tutorial.targets,
+                            TutorialTargets.EDITOR_INTERVAL
+                        )
+                    } else {
+                        Modifier
+                    }
+                    val actionsTutorialTarget = if (index == 0) {
+                        Modifier.tutorialTarget(
+                            tutorial.targets,
+                            TutorialTargets.EDITOR_INTERVAL_ACTIONS
+                        )
+                    } else {
+                        Modifier
+                    }
+
                     IntervalItem(
                         interval = interval,
                         canMoveUp = index > 0,
                         canMoveDown = index < intervals.lastIndex,
+                        actionsModifier = actionsTutorialTarget,
                         onEdit = { editingInterval = interval },
                         onDuplicate = {
                             viewModel.duplicateInterval(templateId, interval.id)
@@ -466,6 +517,7 @@ fun EditorScreen(
                         },
                         modifier = Modifier
                             .animateItem()
+                            .then(cardTutorialTarget)
                             .graphicsLayer {
                                 val scale = 1f - itemDistance * 0.08f
                                 scaleX = scale
@@ -520,6 +572,7 @@ fun IntervalItem(
     onPickImage: () -> Unit,
     onPickVideo: () -> Unit,
     onPickAudio: () -> Unit,
+    actionsModifier: Modifier = Modifier,
     modifier: Modifier = Modifier
 ) {
     val accent = parseColor(interval.colorHex)
@@ -572,7 +625,12 @@ fun IntervalItem(
                 .padding(start = 20.dp, end = 16.dp, top = 16.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // Строка с названием и действиями интервала — цель обучения:
+            // отдельный modifier, чтобы подсветка охватывала только её.
+            Row(
+                modifier = Modifier.then(actionsModifier),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Box(
                     modifier = Modifier
                         .size(34.dp)

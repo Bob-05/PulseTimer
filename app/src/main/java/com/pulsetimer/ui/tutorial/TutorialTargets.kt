@@ -14,11 +14,35 @@ import androidx.compose.ui.layout.onGloballyPositioned
  * тогда показывается по центру без подсветки.
  */
 object TutorialTargets {
+    /** Префиксы ключей экранов: по ним экран вычищает свои цели при выходе. */
+    const val PREFIX_MAIN = "main."
+    const val PREFIX_SETTINGS = "settings."
+    const val PREFIX_EDITOR = "editor."
+    const val PREFIX_EXECUTION = "execution."
+
+    // --- Главный экран ---
     const val ADD_TEMPLATE = "main.addTemplate"
     const val PAGER = "main.pager"
     const val CARD = "main.card"
     const val CARD_ACTIONS = "main.cardActions"
     const val START = "main.start"
+
+    // --- Настройки ---
+    const val SETTINGS_NOTIFICATIONS = "settings.notifications"
+    const val SETTINGS_APP_GROUP = "settings.appGroup"
+    const val SETTINGS_WORKOUT_GROUP = "settings.workoutGroup"
+    const val SETTINGS_HISTORY = "settings.history"
+    const val SETTINGS_TUTORIAL = "settings.tutorial"
+
+    // --- Редактор тренировки ---
+    const val EDITOR_TEMPLATE = "editor.template"
+    const val EDITOR_INTERVAL = "editor.interval"
+    const val EDITOR_INTERVAL_ACTIONS = "editor.intervalActions"
+    const val EDITOR_ADD_INTERVAL = "editor.addInterval"
+
+    // --- Экран идущей тренировки ---
+    const val EXECUTION_TIMER = "execution.timer"
+    const val EXECUTION_CONTROLS = "execution.controls"
 }
 
 /**
@@ -36,6 +60,17 @@ class TutorialTargetRegistry {
 
     fun remove(key: String) {
         boundsByKey.remove(key)
+    }
+
+    /**
+     * Забывает все цели экрана при его уходе из композиции: иначе в реестре
+     * копятся координаты уже не существующих элементов, и следующий показ
+     * обучения может подсветить «пустое место».
+     */
+    fun removeByPrefix(prefix: String) {
+        boundsByKey.keys.filter { key -> key.startsWith(prefix) }.forEach { key ->
+            boundsByKey.remove(key)
+        }
     }
 
     fun bounds(key: String): Rect? = boundsByKey[key]

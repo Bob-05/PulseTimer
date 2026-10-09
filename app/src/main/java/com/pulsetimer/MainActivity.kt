@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -49,6 +50,8 @@ import com.pulsetimer.ui.screen.OnboardingScreen
 import com.pulsetimer.ui.screen.SessionDetailScreen
 import com.pulsetimer.ui.screen.SettingsScreen
 import com.pulsetimer.ui.theme.PulseTimerTheme
+import com.pulsetimer.ui.tutorial.CoachMarkOverlay
+import com.pulsetimer.ui.tutorial.TutorialController
 
 class MainActivity : ComponentActivity() {
 
@@ -157,6 +160,16 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
+                    // Обучение живёт на этом уровне: слой coach marks рисуется
+                    // поверх графа навигации, поэтому подсветка работает
+                    // одинаково на всех экранах, а сами экраны только
+                    // регистрируют свои цели.
+                    val tutorial = remember { TutorialController() }
+
+                    // Обучение перекрывает интерфейс: системный «Назад» закрывает
+                    // его, а не выходит из приложения.
+                    BackHandler(enabled = tutorial.isRunning) { tutorial.finish() }
+
                     // Фон Surface всегда непрозрачный — анимируется только
                     // контент, поэтому нет вспышек window background.
                     Box(
@@ -243,6 +256,7 @@ class MainActivity : ComponentActivity() {
 
                             composable(Screen.Main.route) {
                                 MainScreen(
+                                    tutorial = tutorial,
                                     onStartClick = { templateId, templateName ->
                                         navController.navigate(
                                             "${Screen.Execution.route}/$templateId/${Uri.encode(templateName)}"
@@ -270,6 +284,7 @@ class MainActivity : ComponentActivity() {
                                     backStackEntry.arguments?.getString("templateName") ?: ""
                                 )
                                 ExecutionScreen(
+                                    tutorial = tutorial,
                                     templateId = templateId,
                                     templateName = templateName,
                                     onFinish = {
@@ -286,6 +301,7 @@ class MainActivity : ComponentActivity() {
                                 val templateId = backStackEntry.arguments
                                     ?.getString("templateId")?.toLongOrNull() ?: 0L
                                 EditorScreen(
+                                    tutorial = tutorial,
                                     templateId = templateId,
                                     onBack = { navController.popBackStack() }
                                 )
@@ -293,6 +309,7 @@ class MainActivity : ComponentActivity() {
 
                             composable(Screen.Settings.route) {
                                 SettingsScreen(
+                                    tutorial = tutorial,
                                     onBack = { navController.popBackStack() },
                                     onShowOnboarding = {
                                         navController.navigate(Screen.Onboarding.route)
@@ -344,6 +361,18 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                         }
+                    }
+
+                    // Слой обучения поверх навигации: затемнение, «дырка» вокруг
+                    // цели и подсказка. Затемнение тут ни при чём — контент под
+                    // ним продолжает жить (таймер тренировки идёт).
+                    if (tutorial.isRunning) {
+                        CoachMarkOverlay(
+                            steps = tutorial.steps,
+                            targets = tutorial.targets,
+                            scrimAlpha = tutorial.scrimAlpha,
+                            onFinish = { tutorial.finish() }
+                        )
                     }
                 }
             }

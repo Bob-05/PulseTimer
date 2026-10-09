@@ -26,10 +26,17 @@ data class AppSettings(
     val legalConsentAccepted: Boolean = false,
     /** Интерактивное обучение (coach marks) на главном экране пройдено. */
     val tutorialCompleted: Boolean = false,
+    /** Интерактивное обучение на экране «Настройки» пройдено. */
+    val settingsTutorialCompleted: Boolean = false,
+    /** Интерактивное обучение в редакторе тренировки пройдено. */
+    val editorTutorialCompleted: Boolean = false,
+    /** Интерактивное обучение на экране идущей тренировки пройдено. */
+    val executionTutorialCompleted: Boolean = false,
     /**
      * Запрос на запуск обучения из «Настроек».
-     * Флаг, а не колбэк: обучение живёт на главном экране, куда мы возвращаемся
-     * через popBackStack, и передать туда событие напрямую нечем.
+     * Флаг, а не колбэк: на главный экран мы возвращаемся через popBackStack,
+     * и передать туда событие напрямую нечем. Заодно из «Настроек» сбрасываются
+     * флаги «пройдено» у всех экранов — обучение показывается заново целиком.
      */
     val tutorialRequested: Boolean = false
 )
@@ -93,6 +100,9 @@ object AppSettingsStore {
                 putBoolean("onboardingCompleted", updated.onboardingCompleted)
                 putBoolean("legalConsentAccepted", updated.legalConsentAccepted)
                 putBoolean("tutorialCompleted", updated.tutorialCompleted)
+                putBoolean("settingsTutorialCompleted", updated.settingsTutorialCompleted)
+                putBoolean("editorTutorialCompleted", updated.editorTutorialCompleted)
+                putBoolean("executionTutorialCompleted", updated.executionTutorialCompleted)
                 putBoolean("tutorialRequested", updated.tutorialRequested)
             }
             mutableSettings.value = updated.copy(
@@ -118,6 +128,9 @@ object AppSettingsStore {
         onboardingCompleted = prefs.getBoolean("onboardingCompleted", false),
         legalConsentAccepted = prefs.getBoolean("legalConsentAccepted", false),
         tutorialCompleted = prefs.getBoolean("tutorialCompleted", false),
+        settingsTutorialCompleted = prefs.getBoolean("settingsTutorialCompleted", false),
+        editorTutorialCompleted = prefs.getBoolean("editorTutorialCompleted", false),
+        executionTutorialCompleted = prefs.getBoolean("executionTutorialCompleted", false),
         tutorialRequested = prefs.getBoolean("tutorialRequested", false)
     )
 }

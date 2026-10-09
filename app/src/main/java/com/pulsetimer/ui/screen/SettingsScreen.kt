@@ -85,6 +85,11 @@ import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.data.entity.SessionLogEntity
 import com.pulsetimer.ui.component.CustomSignalEditorDialog
 import com.pulsetimer.ui.component.SignalPreviewPlayer
+import com.pulsetimer.ui.tutorial.TutorialController
+import com.pulsetimer.ui.tutorial.TutorialSteps
+import com.pulsetimer.ui.tutorial.TutorialTargets
+import com.pulsetimer.ui.tutorial.TutorialTrigger
+import com.pulsetimer.ui.tutorial.tutorialTarget
 import com.pulsetimer.viewmodel.TimerViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -109,6 +114,7 @@ private data class PendingSignal(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
+    tutorial: TutorialController,
     onBack: () -> Unit,
     onShowOnboarding: () -> Unit,
     onOpenPrivacy: () -> Unit,
@@ -117,6 +123,20 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val settings by AppSettingsStore.settings.collectAsStateWithLifecycle()
+
+    // Обучение по настройкам — один раз, при первом заходе после основного
+    // обучения на главном экране.
+    TutorialTrigger(
+        controller = tutorial,
+        steps = TutorialSteps.SETTINGS_SCREEN,
+        enabled = !settings.settingsTutorialCompleted && settings.tutorialCompleted,
+        prefix = TutorialTargets.PREFIX_SETTINGS,
+        onCompleted = {
+            AppSettingsStore.update { it.copy(settingsTutorialCompleted = true) }
+        },
+        // Даём списку разложиться и отработать анимации появления групп.
+        startDelayMillis = 700L
+    )
     val viewModel: TimerViewModel = viewModel()
     val logs by viewModel.sessionLogs.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
@@ -224,6 +244,10 @@ fun SettingsScreen(
         ) {
             item {
                 CollapsibleSettingsGroup(
+                    modifier = Modifier.tutorialTarget(
+                        tutorial.targets,
+                        TutorialTargets.SETTINGS_APP_GROUP
+                    ),
                     emoji = "⚙️",
                     title = "Настройки приложения",
                     subtitle = "Уведомления, внешний вид и анимации",
@@ -232,7 +256,12 @@ fun SettingsScreen(
                 ) {
                     SectionTitle("Уведомления")
                     Card(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .tutorialTarget(
+                                tutorial.targets,
+                                TutorialTargets.SETTINGS_NOTIFICATIONS
+                            ),
                         shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(
                             containerColor = if (notificationsEnabled) {
@@ -344,6 +373,10 @@ fun SettingsScreen(
 
             item {
                 CollapsibleSettingsGroup(
+                    modifier = Modifier.tutorialTarget(
+                        tutorial.targets,
+                        TutorialTargets.SETTINGS_WORKOUT_GROUP
+                    ),
                     emoji = "🏋️",
                     title = "Настройки тренировок",
                     subtitle = "Звук, музыка и тактильный отклик",
@@ -541,11 +574,25 @@ fun SettingsScreen(
                     NavigationCard(
                         emoji = "🎯",
                         title = "Интерактивное обучение",
-                        subtitle = "Подсказки с подсветкой прямо на главном экране",
+                        subtitle = "Показать подсказки заново: главный экран, настройки, " +
+                            "редактор и экран тренировки",
+                        modifier = Modifier.tutorialTarget(
+                            tutorial.targets,
+                            TutorialTargets.SETTINGS_TUTORIAL
+                        ),
                         onClick = {
-                            // Обучение живёт на главном экране: ставим флаг и
-                            // возвращаемся туда — MainScreen сам покажет шаги.
-                            AppSettingsStore.update { it.copy(tutorialRequested = true) }
+                            // Обучение живёт вне экранов, а флаг «пройдено» —
+                            // свой у каждого экрана: сбрасываем все и
+                            // возвращаемся на главный, где тур начнётся сразу.
+                            AppSettingsStore.update {
+                                it.copy(
+                                    tutorialCompleted = false,
+                                    settingsTutorialCompleted = false,
+                                    editorTutorialCompleted = false,
+                                    executionTutorialCompleted = false,
+                                    tutorialRequested = true
+                                )
+                            }
                             onBack()
                         }
                     )
@@ -568,6 +615,10 @@ fun SettingsScreen(
 
             item {
                 CollapsibleSettingsGroup(
+                    modifier = Modifier.tutorialTarget(
+                        tutorial.targets,
+                        TutorialTargets.SETTINGS_HISTORY
+                    ),
                     emoji = "📊",
                     title = "История тренировок",
                     subtitle = if (logs.isEmpty()) {
@@ -758,10 +809,11 @@ private fun CollapsibleSettingsGroup(
     subtitle: String,
     expanded: Boolean,
     onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
@@ -919,10 +971,11 @@ private fun NavigationCard(
     emoji: String,
     title: String,
     subtitle: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         onClick = onClick,
         colors = CardDefaults.cardColors(

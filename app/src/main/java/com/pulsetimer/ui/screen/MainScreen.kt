@@ -1,6 +1,5 @@
 package com.pulsetimer.ui.screen
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -79,10 +78,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.data.entity.TemplateEntity
 import com.pulsetimer.service.TimerService
-import com.pulsetimer.ui.tutorial.CoachMarkOverlay
+import com.pulsetimer.ui.tutorial.TutorialController
 import com.pulsetimer.ui.tutorial.TutorialSteps
 import com.pulsetimer.ui.tutorial.TutorialTargetRegistry
 import com.pulsetimer.ui.tutorial.TutorialTargets
+import com.pulsetimer.ui.tutorial.TutorialTrigger
 import com.pulsetimer.ui.tutorial.tutorialTarget
 import com.pulsetimer.viewmodel.TimerViewModel
 import kotlinx.coroutines.coroutineScope
@@ -94,60 +94,41 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun MainScreen(
+    tutorial: TutorialController,
     viewModel: TimerViewModel = viewModel(),
     onStartClick: (Long, String) -> Unit,
     onEditClick: (Long) -> Unit,
     onSettingsClick: () -> Unit
 ) {
-    val tutorialTargets = remember { TutorialTargetRegistry() }
     val settings by AppSettingsStore.settings.collectAsStateWithLifecycle()
-    var tutorialRunning by remember { mutableStateOf(false) }
-
-    val finishTutorial: () -> Unit = {
-        tutorialRunning = false
-        AppSettingsStore.update {
-            it.copy(tutorialCompleted = true, tutorialRequested = false)
-        }
-    }
 
     // Обучение стартует автоматически после онбординга и по запросу из
-    // «Настроек». Запрос — одноразовый: сбрасываем флаг сразу, иначе обучение
-    // возвращалось бы при каждой перерисовке настроек.
-    LaunchedEffect(settings.tutorialCompleted, settings.tutorialRequested) {
-        if (settings.tutorialRequested) {
-            // Пользователь сам попросил обучение — показываем без задержки.
-            tutorialRunning = true
-            AppSettingsStore.update { it.copy(tutorialRequested = false) }
-        } else if (!settings.tutorialCompleted && settings.onboardingCompleted) {
-            // Первый показ: ждём, пока закончится появление контента, иначе
-            // подсветка «дрожит» вместе с анимацией входа главного экрана.
-            delay(600)
-            tutorialRunning = true
-        }
-    }
+    // «Настроек». Запрос — одноразовый: флаг сбрасываем по завершении, иначе
+    // обучение возвращалось бы при каждой перерисовке главного экрана.
+    TutorialTrigger(
+        controller = tutorial,
+        steps = TutorialSteps.MAIN_SCREEN,
+        enabled = settings.tutorialRequested ||
+            (!settings.tutorialCompleted && settings.onboardingCompleted),
+        prefix = TutorialTargets.PREFIX_MAIN,
+        onCompleted = {
+            AppSettingsStore.update {
+                it.copy(tutorialCompleted = true, tutorialRequested = false)
+            }
+        },
+        // Первый показ ждёт, пока закончится появление контента, иначе
+        // подсветка «дрожит» вместе с анимацией входа главного экрана.
+        // Запрошенное из «Настроек» обучение показываем без задержки.
+        startDelayMillis = if (settings.tutorialRequested) 0L else 600L
+    )
 
-    if (tutorialRunning) {
-        // Обучение перекрывает экран: системный «Назад» закрывает его, а не
-        // выходит из приложения (закрытие засчитывается как «просмотрено»).
-        BackHandler(onBack = finishTutorial)
-    }
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        MainScreenScaffold(
-            viewModel = viewModel,
-            tutorialTargets = tutorialTargets,
-            onStartClick = onStartClick,
-            onEditClick = onEditClick,
-            onSettingsClick = onSettingsClick
-        )
-        if (tutorialRunning) {
-            CoachMarkOverlay(
-                steps = TutorialSteps.MAIN_SCREEN,
-                targets = tutorialTargets,
-                onFinish = finishTutorial
-            )
-        }
-    }
+    MainScreenScaffold(
+        viewModel = viewModel,
+        tutorialTargets = tutorial.targets,
+        onStartClick = onStartClick,
+        onEditClick = onEditClick,
+        onSettingsClick = onSettingsClick
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)

@@ -79,7 +79,9 @@ fun SessionDetailScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 16.dp),
+                // Небольшой отступ сверху: карточка сводки не должна прилипать
+                // к тулбару.
+                .padding(start = 16.dp, end = 16.dp, top = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {

@@ -96,6 +96,13 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pulsetimer.data.AppSettingsStore
+import com.pulsetimer.ui.tutorial.LIGHT_TUTORIAL_SCRIM_ALPHA
+import com.pulsetimer.ui.tutorial.TutorialController
+import com.pulsetimer.ui.tutorial.TutorialSteps
+import com.pulsetimer.ui.tutorial.TutorialTargetRegistry
+import com.pulsetimer.ui.tutorial.TutorialTargets
+import com.pulsetimer.ui.tutorial.TutorialTrigger
+import com.pulsetimer.ui.tutorial.tutorialTarget
 import com.pulsetimer.viewmodel.TimerViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -104,6 +111,7 @@ import java.util.Locale
 
 @Composable
 fun ExecutionScreen(
+    tutorial: TutorialController,
     viewModel: TimerViewModel = viewModel(),
     templateId: Long,
     templateName: String,
@@ -124,6 +132,30 @@ fun ExecutionScreen(
             delay(650)
             initialEntryCompleted = true
         }
+    }
+
+    // Обучение по идущей тренировке — один раз, уже после вступительной
+    // анимации интервала. Затемнение здесь светлее ([LIGHT_TUTORIAL_SCRIM_ALPHA]):
+    // таймер должен оставаться различимым под подсказкой.
+    TutorialTrigger(
+        controller = tutorial,
+        steps = TutorialSteps.EXECUTION_SCREEN,
+        enabled = !settings.executionTutorialCompleted &&
+            settings.tutorialCompleted &&
+            initialEntryCompleted &&
+            !isFinished,
+        prefix = TutorialTargets.PREFIX_EXECUTION,
+        onCompleted = {
+            AppSettingsStore.update { it.copy(executionTutorialCompleted = true) }
+        },
+        startDelayMillis = 400L,
+        scrimAlpha = LIGHT_TUTORIAL_SCRIM_ALPHA
+    )
+
+    // Тренировка закончилась, а подсказки остались — закрываем их, иначе они
+    // висели бы поверх экрана «Поздравляем».
+    LaunchedEffect(isFinished) {
+        if (isFinished) tutorial.finish()
     }
 
     var timedOut by remember(templateId) { mutableStateOf(false) }
@@ -276,6 +308,7 @@ fun ExecutionScreen(
                 isPaused = timerState.isPaused,
                 animatedBackgrounds = settings.animatedBackgrounds,
                 animateInitialEntry = !initialEntryCompleted && phase.index == 0,
+                tutorialTargets = tutorial.targets,
                 onClose = { viewModel.stopTimer(); onFinish() },
                 onPauseToggle = {
                     if (timerState.isPaused) viewModel.resumeTimer() else viewModel.pauseTimer()
@@ -489,6 +522,7 @@ private fun PhaseFullScreen(
     isPaused: Boolean,
     animatedBackgrounds: Boolean,
     animateInitialEntry: Boolean,
+    tutorialTargets: TutorialTargetRegistry,
     onClose: () -> Unit,
     onPauseToggle: () -> Unit,
     onSkip: () -> Unit,
@@ -566,7 +600,13 @@ private fun PhaseFullScreen(
                 Box(modifier = Modifier.size(48.dp))
             }
 
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(
+                modifier = Modifier.tutorialTarget(
+                    tutorialTargets,
+                    TutorialTargets.EXECUTION_TIMER
+                ),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
                 Text(
                     text = phase.name,
                     color = Color.White,
@@ -593,7 +633,12 @@ private fun PhaseFullScreen(
             }
 
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .tutorialTarget(
+                        tutorialTargets,
+                        TutorialTargets.EXECUTION_CONTROLS
+                    ),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
