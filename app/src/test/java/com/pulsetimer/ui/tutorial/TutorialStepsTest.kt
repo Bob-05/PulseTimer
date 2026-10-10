@@ -3,6 +3,7 @@ package com.pulsetimer.ui.tutorial
 import com.pulsetimer.data.AppSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -33,9 +34,8 @@ class TutorialStepsTest {
             ),
             pressSteps.map { step -> step.targetKey }
         )
-        // У шага-перехода всегда есть подпись кнопки: иначе не понять, что
-        // «Далее» нажмёт элемент за пользователя, а не просто откроет подсказку.
-        assertTrue(pressSteps.all { step -> step.actionLabel != null })
+        // Подпись кнопки у шага-перехода проверяет сам TutorialStep: без неё
+        // пользователь не отличит «обучение нажмёт за вас» от кнопки «Далее».
     }
 
     @Test
@@ -100,6 +100,21 @@ class TutorialStepsTest {
         // Шаг по центру экрана не принадлежит ни одному экрану: по префиксу
         // контроллер решает, доступна ли кнопка «Назад».
         assertEquals("", steps.first().screenPrefix)
+    }
+
+    @Test
+    fun pressStepWithoutActionLabelIsRejected() {
+        // Подпись кнопки у шага-перехода — часть контракта, а не пожелание:
+        // без неё пользователь не отличит «обучение нажмёт за вас» от обычной
+        // кнопки «Далее».
+        assertThrows(IllegalArgumentException::class.java) {
+            TutorialStep(
+                targetKey = TutorialTargets.CARD_EDIT,
+                title = "Откроем редактор",
+                text = "Текст",
+                pressTarget = true
+            )
+        }
     }
 
     @Test
