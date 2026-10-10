@@ -185,6 +185,12 @@ fun SettingsScreen(
                 index = 3,
                 prepare = { if (!historyExpanded) historyExpanded = true }
             )
+        ),
+        // Стрелка «назад»: обучение возвращает пользователя к списку тренировок.
+        // Без зарегистрированного действия шаг-переход не смог бы покинуть экран,
+        // и тур пошёл бы дальше по шагам главного экрана, оставаясь в настройках.
+        actions = mapOf(
+            TutorialTargets.SETTINGS_BACK to onBack
         )
     )
 

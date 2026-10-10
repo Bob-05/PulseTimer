@@ -189,12 +189,21 @@ class TutorialController(private val scope: CoroutineScope) {
      * «Нажимает» цель за пользователя: так обучение само ведёт его на другой
      * экран. Индекс шага двигается до нажатия — следующий шаг сразу начинает
      * ждать цель уже на новом экране.
+     *
+     * Действия может не оказаться: экран не зарегистрировал его или уже ушёл из
+     * композиции. Тогда вести пользователя некуда, и тур закрывается — иначе
+     * обучение молча «нажало» бы пустоту, ушло на шаги следующего экрана и
+     * оставило тёмный слой висеть поверх чужого экрана.
      */
     private fun pressTarget(step: TutorialStep) {
-        val action = step.targetKey?.let { key -> targets.action(key) }
+        val key = step.targetKey ?: return
+        val action = targets.action(key) ?: run {
+            finish()
+            return
+        }
         awaitingScreen = true
         goTo(stepIndex + 1)
-        action?.invoke()
+        action()
     }
 
     /**
