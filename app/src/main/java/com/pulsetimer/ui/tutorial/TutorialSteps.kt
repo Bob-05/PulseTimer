@@ -149,33 +149,9 @@ object TutorialSteps {
             )
         )
         // --- Редактор: параметры тренировки и интервалы ---
-        add(
-            TutorialStep(
-                targetKey = TutorialTargets.EDITOR_TEMPLATE,
-                emoji = "🎛",
-                title = "Параметры тренировки",
-                text = "Значок, название, описание, фон (картинка или видео) и общая " +
-                    "музыка всей тренировки. Кнопки «Сохранить» нет — пишется сразу."
-            )
-        )
-        add(
-            TutorialStep(
-                targetKey = TutorialTargets.EDITOR_INTERVAL,
-                emoji = "🧱",
-                title = "Интервалы",
-                text = "Каждая карточка — один интервал: длительность, цвет, свой фон, " +
-                    "мелодия и вибрация."
-            )
-        )
-        add(
-            TutorialStep(
-                targetKey = TutorialTargets.EDITOR_ADD_INTERVAL,
-                emoji = "➕",
-                title = "Новый интервал",
-                text = "Кнопка «+» добавляет интервал, а стрелки и значок копирования " +
-                    "на карточке правят порядок и дублируют настройки."
-            )
-        )
+        add(editorTemplateStep)
+        add(editorIntervalStep)
+        add(editorAddIntervalStep)
         add(
             TutorialStep(
                 targetKey = TutorialTargets.EDITOR_BACK,
@@ -263,6 +239,35 @@ object TutorialSteps {
         add(tourEnd)
     }
 
+    /**
+     * Шаги про редактор, общие для тура и для подсказок при первом заходе:
+     * рассказ про параметры тренировки, интервалы и кнопку добавления должен
+     * совпадать, иначе две версии одного текста расходятся при первой же правке.
+     */
+    private val editorTemplateStep = TutorialStep(
+        targetKey = TutorialTargets.EDITOR_TEMPLATE,
+        emoji = "🎛",
+        title = "Параметры тренировки",
+        text = "Значок, название, описание, фон (картинка или видео) и общая " +
+            "музыка всей тренировки. Кнопки «Сохранить» нет — пишется сразу."
+    )
+
+    private val editorIntervalStep = TutorialStep(
+        targetKey = TutorialTargets.EDITOR_INTERVAL,
+        emoji = "🧱",
+        title = "Интервалы",
+        text = "Каждая карточка — один интервал: длительность, цвет, свой фон, " +
+            "мелодия и вибрация. Стрелки и значок копирования на карточке правят " +
+            "порядок и дублируют настройки."
+    )
+
+    private val editorAddIntervalStep = TutorialStep(
+        targetKey = TutorialTargets.EDITOR_ADD_INTERVAL,
+        emoji = "➕",
+        title = "Новый интервал",
+        text = "Кнопка «+» внизу добавляет интервал в конец списка."
+    )
+
     /** «Настройки»: уведомления, внешний вид, тренировка и история. */
     val SETTINGS_SCREEN: List<TutorialStep> = listOf(
         TutorialStep(
@@ -319,20 +324,8 @@ object TutorialSteps {
             text = "Соберём тренировку: параметры, интервалы и их порядок. " +
                 "Кнопки «Сохранить» нет — изменения пишутся сразу."
         ),
-        TutorialStep(
-            targetKey = TutorialTargets.EDITOR_TEMPLATE,
-            emoji = "🎴",
-            title = "Параметры тренировки",
-            text = "Значок, название, описание, фон (картинка или видео) " +
-                "и общая музыка всей тренировки."
-        ),
-        TutorialStep(
-            targetKey = TutorialTargets.EDITOR_INTERVAL,
-            emoji = "🧱",
-            title = "Интервалы",
-            text = "Каждая карточка — один интервал: название, длительность, цвет, " +
-                "свой фон, мелодия и вибрация."
-        ),
+        editorTemplateStep,
+        editorIntervalStep,
         TutorialStep(
             targetKey = TutorialTargets.EDITOR_INTERVAL_ACTIONS,
             emoji = "⧉",
@@ -340,13 +333,7 @@ object TutorialSteps {
             text = "Карандаш меняет интервал, значок копирования дублирует его " +
                 "со всеми настройками, корзина удаляет."
         ),
-        TutorialStep(
-            targetKey = TutorialTargets.EDITOR_ADD_INTERVAL,
-            emoji = "➕",
-            title = "Добавить интервал",
-            text = "Кнопка «+» внизу добавляет новый интервал в конец списка. " +
-                "Дальше его можно переставить стрелками на карточке."
-        ),
+        editorAddIntervalStep,
         TutorialStep(
             targetKey = null,
             emoji = "🚀",
