@@ -27,7 +27,6 @@ object TutorialTargets {
 
     // --- Главный экран ---
     const val ADD_TEMPLATE = "main.addTemplate"
-    const val PAGER = "main.pager"
     const val CARD = "main.card"
     const val CARD_ACTIONS = "main.cardActions"
 
@@ -74,12 +73,6 @@ object TutorialTargets {
     const val EXECUTION_CLOSE = "execution.close"
 }
 
-/**
- * Координаты целей обучения (в координатах окна).
- *
- * Хранилище — `mutableStateMapOf`, поэтому обучение само перерисовывается,
- * если цель сдвинулась (прокрутка, анимация, поворот экрана).
- */
 /**
  * Как привести экран в состояние, в котором цель видно.
  *

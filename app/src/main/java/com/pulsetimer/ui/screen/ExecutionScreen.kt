@@ -160,7 +160,6 @@ fun ExecutionScreen(
     var pausedByTutorial by remember { mutableStateOf(false) }
     TutorialScreenTargets(
         registry = tutorial.targets,
-        prefix = TutorialTargets.PREFIX_EXECUTION,
         actions = mapOf(
             TutorialTargets.EXECUTION_PAUSE to {
                 pausedByTutorial = !timerState.isPaused

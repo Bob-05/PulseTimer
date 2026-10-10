@@ -272,7 +272,6 @@ fun EditorScreen(
     // «Интервалы» (1), первый интервал (2).
     TutorialScreenTargets(
         registry = tutorial.targets,
-        prefix = TutorialTargets.PREFIX_EDITOR,
         plans = mapOf(
             TutorialTargets.EDITOR_TEMPLATE to lazyListScrollPlan(
                 state = intervalsListState,

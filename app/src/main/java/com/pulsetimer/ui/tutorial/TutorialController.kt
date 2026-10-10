@@ -449,22 +449,18 @@ fun TutorialTrigger(
  * Регистрация идёт после каждой композиции ([SideEffect]): лямбды экрана
  * закрываются над его состоянием, и в реестре всегда должны лежать свежие.
  *
- * @param prefix префикс ключей экрана — по нему цели удаляются при выходе.
+ * Координаты и эти планы чистит [TutorialTrigger] по префиксу экрана: он есть у
+ * любого экрана с обучением, поэтому убирать цели здесь второй раз не нужно.
  */
 @Composable
 fun TutorialScreenTargets(
     registry: TutorialTargetRegistry,
-    prefix: String,
     plans: Map<String, TutorialScrollPlan> = emptyMap(),
     actions: Map<String, () -> Unit> = emptyMap()
 ) {
     SideEffect {
         plans.forEach { (key, plan) -> registry.putPlan(key, plan) }
         actions.forEach { (key, action) -> registry.putAction(key, action) }
-    }
-
-    DisposableEffect(registry, prefix) {
-        onDispose { registry.removeByPrefix(prefix) }
     }
 }
 

@@ -158,7 +158,6 @@ fun SettingsScreen(
     // ленте ниже: приложение (0), тренировки (1), справка (2), история (3).
     TutorialScreenTargets(
         registry = tutorial.targets,
-        prefix = TutorialTargets.PREFIX_SETTINGS,
         plans = mapOf(
             TutorialTargets.SETTINGS_APP_GROUP to lazyListScrollPlan(
                 state = settingsListState,

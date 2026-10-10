@@ -215,7 +215,6 @@ private fun MainScreenScaffold(
     }
     TutorialScreenTargets(
         registry = tutorialTargets,
-        prefix = TutorialTargets.PREFIX_MAIN,
         plans = mapOf(
             TutorialTargets.CARD to firstCardPlan,
             TutorialTargets.CARD_ACTIONS to firstCardPlan,
@@ -342,8 +341,7 @@ private fun MainScreenScaffold(
                     state = pagerState,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f)
-                        .tutorialTarget(tutorialTargets, TutorialTargets.PAGER),
+                        .weight(1f),
                     contentPadding = PaddingValues(horizontal = 32.dp),
                     pageSpacing = 16.dp,
                     // Ключ по id сохраняет визуальную позицию существующих
