@@ -143,12 +143,6 @@ class TutorialTargetRegistry {
         boundsByKey[key] = bounds
     }
 
-    fun remove(key: String) {
-        boundsByKey.remove(key)
-        plansByKey.remove(key)
-        actionsByKey.remove(key)
-    }
-
     /**
      * Забывает все цели экрана при его уходе из композиции: иначе в реестре
      * копятся координаты уже не существующих элементов, и следующий показ

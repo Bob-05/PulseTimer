@@ -83,7 +83,6 @@ class TimerService : Service() {
     private val intervalCounted = mutableListOf<Boolean>()
 
     private var mediaPlayer: MediaPlayer? = null
-    private var playingAudioUri: String? = null
     private var requestedAudioUri: String? = null
     private var volumeAnimator: ValueAnimator? = null
     private var toneTrack: AudioTrack? = null
@@ -256,7 +255,6 @@ class TimerService : Service() {
         SpeechEngine.stop()
         cancelTonePlayback()
         requestedAudioUri = null
-        playingAudioUri = null
         releasePlayerSafely()
         if (wakeLock?.isHeld == true) wakeLock?.release()
 
@@ -820,7 +818,6 @@ class TimerService : Service() {
         mainHandler.post {
             if (requestedAudioUri != audioUri) return@post
             releasePlayerSafely()
-            playingAudioUri = audioUri
             if (audioUri == null) return@post
             val player = MediaPlayer()
             mediaPlayer = player
@@ -915,7 +912,6 @@ class TimerService : Service() {
         musicDuckedBySignal = false
         val p = mediaPlayer
         mediaPlayer = null
-        playingAudioUri = null
         if (p == null) return
         try { if (p.isPlaying) p.stop() } catch (_: IllegalStateException) { }
         try { p.reset() } catch (_: IllegalStateException) { }

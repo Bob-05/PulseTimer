@@ -224,9 +224,9 @@ private fun IntervalLogCard(intervalLog: SessionIntervalLogEntity) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(8.dp))
-            // Своя полоска вместо LinearProgressIndicator: у M3-индикатора в
-            // проекте нет ни одного использования, а Box не тянет за собой
-            // зависимость от версии compose-material3.
+            // Своя полоска прогресса: Box даёт точный контроль над цветом
+            // (accent интервала), тогда как LinearProgressIndicator пришлось бы
+            // красить через colors-параметры, теряя контраст с фоном карточки.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()

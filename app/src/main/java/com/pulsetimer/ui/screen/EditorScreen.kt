@@ -43,11 +43,13 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -418,7 +420,7 @@ fun EditorScreen(
                                 )
                             }
                             if (template.backgroundType != "COLOR") {
-                                androidx.compose.material3.OutlinedButton(
+                                OutlinedButton(
                                     onClick = {
                                         viewModel.updateTemplate(
                                             template.copy(backgroundType = "COLOR", backgroundValue = "")
@@ -439,7 +441,7 @@ fun EditorScreen(
                                 )
                             }
                             if (template.audioUri != null) {
-                                androidx.compose.material3.OutlinedButton(
+                                OutlinedButton(
                                     onClick = {
                                         viewModel.updateTemplate(template.copy(audioUri = null))
                                     },
@@ -732,7 +734,7 @@ fun IntervalItem(
                     )
                 }
             }
-            androidx.compose.material3.OutlinedButton(
+            OutlinedButton(
                 onClick = onPickImage,
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -743,12 +745,12 @@ fun IntervalItem(
                 )
             }
             if (interval.backgroundType == "CUSTOM_IMAGE") {
-                androidx.compose.material3.TextButton(
+                TextButton(
                     onClick = { onUpdate(interval.copy(backgroundType = "COLOR", backgroundValue = "")) },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Сбросить изображение") }
             }
-            androidx.compose.material3.OutlinedButton(
+            OutlinedButton(
                 onClick = onPickVideo,
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -759,12 +761,12 @@ fun IntervalItem(
                 )
             }
             if (interval.backgroundType == "VIDEO") {
-                androidx.compose.material3.TextButton(
+                TextButton(
                     onClick = { onUpdate(interval.copy(backgroundType = "COLOR", backgroundValue = "")) },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Сбросить видеофон") }
             }
-            androidx.compose.material3.OutlinedButton(
+            OutlinedButton(
                 onClick = onPickAudio,
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -773,7 +775,7 @@ fun IntervalItem(
                 )
             }
             if (interval.audioUri != null) {
-                androidx.compose.material3.TextButton(
+                TextButton(
                     onClick = { onUpdate(interval.copy(audioUri = null)) },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Удалить мелодию") }

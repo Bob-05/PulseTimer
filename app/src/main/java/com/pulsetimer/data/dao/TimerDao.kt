@@ -139,9 +139,6 @@ interface TimerDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSessionIntervalLogs(logs: List<SessionIntervalLogEntity>)
 
-    @Update
-    suspend fun updateSessionIntervalLogs(logs: List<SessionIntervalLogEntity>)
-
     /**
      * Результат интервала ищется по (sessionLogId, orderIndex), а не по id
      * строки: сервису не нужно запоминать идентификаторы сразу после
