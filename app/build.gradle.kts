@@ -55,6 +55,11 @@ android {
     buildFeatures {
         compose = true
     }
+    testOptions {
+        // Тесты контроллера обучения гоняют корутины подготовки на JVM: без этого
+        // android.util.Log из них бросает «not mocked».
+        unitTests.isReturnDefaultValues = true
+    }
 
     sourceSets {
         getByName("main") {
@@ -76,6 +81,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.lifecycle.viewmodel.ktx)
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
     ksp(libs.androidx.room.compiler)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
