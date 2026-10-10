@@ -105,10 +105,12 @@ fun MainScreen(
 ) {
     val settings by AppSettingsStore.settings.collectAsStateWithLifecycle()
     val templates by viewModel.templates.collectAsStateWithLifecycle()
+    val templatesLoaded by viewModel.templatesLoaded.collectAsStateWithLifecycle()
 
     // Набор шагов зависит от того, есть ли тренировки: без них показывать
-    // редактор и запуск нечего. Список приходит из базы асинхронно, но показ
-    // стартует с задержкой, а смена набора перезапускает ожидание.
+    // редактор и запуск нечего. Список приходит из базы асинхронно, поэтому
+    // обучение стартует только после первого снимка (см. templatesLoaded ниже) —
+    // иначе тур успевал бы начаться с укороченным набором без карточек.
     val hasWorkouts = templates.isNotEmpty()
     val steps = remember(hasWorkouts) {
         TutorialSteps.guidedTour(hasWorkouts = hasWorkouts)
@@ -120,8 +122,12 @@ fun MainScreen(
     TutorialTrigger(
         controller = tutorial,
         steps = steps,
-        enabled = settings.tutorialRequested ||
-            (!settings.tutorialCompleted && settings.onboardingCompleted),
+        // Ждём загрузку списка: запрошенный из «Настроек» тур иначе стартовал бы
+        // до того, как известно, есть ли тренировки, и часть шагов потерялась бы.
+        enabled = templatesLoaded && (
+            settings.tutorialRequested ||
+                (!settings.tutorialCompleted && settings.onboardingCompleted)
+            ),
         prefix = TutorialTargets.PREFIX_MAIN,
         // Тур помечает пройденными только те экраны, которые успел показать:
         // без тренировок он не доходит до редактора и запуска, а подсказки по

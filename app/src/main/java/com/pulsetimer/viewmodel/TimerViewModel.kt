@@ -35,6 +35,26 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
     val templates: StateFlow<List<TemplateEntity>> = dao.getAllTemplates()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    private val _templatesLoaded = MutableStateFlow(false)
+
+    /**
+     * Первый снимок списка тренировок уже пришёл из базы.
+     *
+     * Нужен главному экрану: набор шагов обучения зависит от того, есть ли
+     * тренировки, а до первого чтения `templates` пустой список — это ещё не
+     * «тренировок нет», а «пока не знаем». Без этого признака тур, запущенный
+     * сразу (например, по кнопке в настройках), показывал бы укороченный набор
+     * без карточек и редактора.
+     */
+    val templatesLoaded: StateFlow<Boolean> = _templatesLoaded.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            dao.getAllTemplates().first()
+            _templatesLoaded.value = true
+        }
+    }
+
     val sessionLogs: StateFlow<List<SessionLogEntity>> = dao.getAllSessionLogs()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
