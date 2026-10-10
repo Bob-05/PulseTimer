@@ -1,5 +1,6 @@
 package com.pulsetimer.ui.tutorial
 
+import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -65,8 +66,8 @@ class TutorialController(private val scope: CoroutineScope) {
     /**
      * `false` — обучение ведёт пользователя: переходит на другой экран,
      * раскрывает блоки и прокручивает список. Подсказка в это время не показана
-     * (затемнение уже видно), нажатия перехватываются, а тап по фону сокращает
-     * ожидание.
+     * (затемнение уже видно, а по центру крутится индикатор подготовки), нажатия
+     * перехватываются, а тап по фону сокращает ожидание.
      */
     var isRevealed: Boolean by mutableStateOf(false)
         private set
@@ -116,6 +117,7 @@ class TutorialController(private val scope: CoroutineScope) {
         scrimAlpha: Float = DEFAULT_TUTORIAL_SCRIM_ALPHA
     ) {
         if (isRunning) return
+        Log.d(TAG, "Tour started: ${steps.size} steps")
         this.onFinish = onFinish
         baseScrimAlpha = scrimAlpha
         this.steps = steps
@@ -163,6 +165,7 @@ class TutorialController(private val scope: CoroutineScope) {
      */
     fun finish() {
         if (!isRunning) return
+        Log.d(TAG, "Tour finished at step ${stepIndex + 1} of ${steps.size}")
         prepareJob?.cancel()
         prepareJob = null
         hurryUp = false
@@ -212,43 +215,57 @@ class TutorialController(private val scope: CoroutineScope) {
      * Порядок такой: дождаться цели (экран мог только что смениться) → выполнить
      * план показа (раскрыть группу настроек, пролистать пейджер) → прокрутить
      * список к элементу → центрировать цель по середине экрана → дождаться, пока
-     * разметка устоится, — и только затем плавно показать модальное окно. Шаг,
-     * для которого цели на экране нет (например, пустой список тренировок),
-     * пропускается: рассказывать про несуществующий элемент нечего.
+     * разметка устоится, — и только затем плавно показать модальное окно.
+     *
+     * Если цели на экране так и не появилось (пустой список тренировок, у шаблона
+     * нет ни одного интервала), подсказка показывается по центру, без подсветки:
+     * молча пропущенный шаг выглядел для пользователя как мелькнувшая подсказка,
+     * из-за которой тур «терял» часть рассказа.
      */
     private fun prepare() {
         val afterScreenChange = awaitingScreen
         awaitingScreen = false
-        // Новый шаг начинаем ждать терпеливо: «ускорение» относилось к прошлому.
+        // Следующий шаг начинаем ждать терпеливо: «ускорение» относилось к прошлому.
         hurryUp = false
         prepareJob?.cancel()
         prepareJob = scope.launch {
-            var timeout = if (afterScreenChange) {
-                SCREEN_CHANGE_TIMEOUT_MILLIS
-            } else {
-                TARGET_TIMEOUT_MILLIS
-            }
-            repeat(steps.size + 1) {
-                val step = steps.getOrNull(stepIndex) ?: return@launch
-                if (prepareStep(step, timeout)) return@launch
-                timeout = TARGET_TIMEOUT_MILLIS
-                if (stepIndex >= steps.lastIndex) {
-                    finish()
-                    return@launch
+            val step = steps.getOrNull(stepIndex) ?: return@launch
+            prepareStep(
+                step = step,
+                timeoutMillis = if (afterScreenChange) {
+                    SCREEN_CHANGE_TIMEOUT_MILLIS
+                } else {
+                    TARGET_TIMEOUT_MILLIS
                 }
-                stepIndex++
-            }
+            )
         }
     }
 
-    /** @return true, если шаг показан: дальше ждать нечего. */
-    private suspend fun prepareStep(step: TutorialStep, timeoutMillis: Long): Boolean {
+    /**
+     * Приводит экран к шагу и показывает подсказку. Цель может не появиться
+     * вовсе — тогда подсветки не будет, но подсказку пользователь всё равно
+     * увидит: шаг не пропускаем.
+     */
+    private suspend fun prepareStep(step: TutorialStep, timeoutMillis: Long) {
         // «Ускорение» относится к одному шагу: следующий ждём заново.
         hurryUp = false
-        val key = step.targetKey ?: run {
+        val key = step.targetKey
+        if (key == null) {
             reveal()
-            return true
+            return
         }
+        if (!prepareTarget(key, timeoutMillis)) {
+            Log.d(
+                TAG,
+                "Step ${stepIndex + 1}: target $key is not on screen, " +
+                    "showing the hint centered"
+            )
+        }
+        reveal()
+    }
+
+    /** @return false, если цель так и не появилась: подсвечивать нечего. */
+    private suspend fun prepareTarget(key: String, timeoutMillis: Long): Boolean {
         // Экран мог только что смениться: цель появится в реестре не мгновенно.
         if (!awaitRegistered(key, timeoutMillis)) return false
         val plan = targets.plan(key)
@@ -260,7 +277,6 @@ class TutorialController(private val scope: CoroutineScope) {
         awaitStableBounds(key)
         centerTarget(key, plan)
         awaitStableBounds(key)
-        reveal()
         return true
     }
 
@@ -358,9 +374,10 @@ private const val STABLE_FRAMES = 2
 private const val STABILITY_TOLERANCE_PX = 1f
 
 /**
- * Сколько ждём цель на текущем экране, прежде чем считать шаг недоступным.
- * Значения подобраны так, чтобы пауза между подсказками не читалась как
- * зависание: пользователь всё это время видит затемнение, но нажатия не проходят.
+ * Сколько ждём цель на текущем экране, прежде чем показать подсказку без
+ * подсветки. Значения подобраны так, чтобы пауза между подсказками не читалась
+ * как зависание: пользователь всё это время видит затемнение, но нажатия не
+ * проходят.
  */
 private const val TARGET_TIMEOUT_MILLIS = 600L
 
@@ -372,6 +389,13 @@ private const val LAYOUT_SETTLE_TIMEOUT_MILLIS = 800L
 
 /** Меньше этого смещения цель уже считается стоящей по центру (в пикселях). */
 private const val CENTER_TOLERANCE_PX = 24f
+
+/**
+ * Метка для Logcat: по ней видно, какие шаги тур реально показал, а на каком
+ * потоке он «потерял» цель. До этого обучение не логировало ничего, и подвисший
+ * или проскочивший шаг нельзя было отличить от ошибки навигации.
+ */
+private const val TAG = "TutorialController"
 
 /**
  * Запускает обучение экрана при первом на него заходе и подчищает за собой

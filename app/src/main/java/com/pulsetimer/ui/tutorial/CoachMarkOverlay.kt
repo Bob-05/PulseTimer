@@ -41,6 +41,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -96,10 +97,12 @@ const val LIGHT_TUTORIAL_SCRIM_ALPHA = 0.55f
  * состояния (переход, раскрытие блоков, прокрутка и центрирование цели) и лишь
  * потом выставляет [TutorialController.isRevealed] — подсказка проявляется
  * плавно, уже над нужным местом. Затемнение при этом видно с первого кадра
- * подготовки, так что слой не выглядит зависшим. Тап по затемнению переводит на
- * следующий шаг: целиться в кнопку не нужно, а если шаг ещё готовится — тап
- * сокращает ожидание. При этом нажатия не доходят до интерфейса под слоем —
- * случайный тап не запустит тренировку и не удалит карточку.
+ * подготовки, а пока идёт подготовка, по центру крутится индикатор: слой не
+ * выглядит зависшим, и понятно, что подсказка вот-вот появится. Тап по
+ * затемнению переводит на следующий шаг: целиться в кнопку не нужно, а если шаг
+ * ещё готовится — тап сокращает ожидание. При этом нажатия не доходят до
+ * интерфейса под слоем — случайный тап не запустит тренировку и не удалит
+ * карточку.
  */
 @Composable
 fun CoachMarkOverlay(
@@ -206,6 +209,24 @@ fun CoachMarkOverlay(
                     style = Stroke(width = strokePx)
                 )
             }
+        }
+
+        // Пока шаг готовится (переход на другой экран, раскрытие группы,
+        // прокрутка списка), подсказка ещё прозрачна, и затемнение без индикатора
+        // читается как «приложение зависло». Кружок проявляется сразу и гаснет,
+        // как только подсказка показана.
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .size(36.dp)
+                .graphicsLayer { alpha = 1f - reveal },
+            contentAlignment = Alignment.Center
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.fillMaxSize(),
+                color = accent,
+                strokeWidth = 3.dp
+            )
         }
 
         // Слой, который съедает нажатия: элементы под обучением «не живые», а
