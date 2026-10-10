@@ -114,6 +114,32 @@ private data class PendingSignal(
     val isReplacement: Boolean
 )
 
+/**
+ * Порядок разделов в ленте настроек — единственное место, где он записан.
+ *
+ * Обучение прокручивает ленту к нужному разделу, и позицию оно берёт отсюда:
+ * пока индексы были числами в каждом плане, новый раздел в начале ленты сдвигал
+ * бы подсказки на соседние блоки и никто бы этого не заметил.
+ */
+private val SETTINGS_SECTION_ORDER = listOf(
+    TutorialTargets.SETTINGS_APP_GROUP,
+    TutorialTargets.SETTINGS_WORKOUT_GROUP,
+    TutorialTargets.SETTINGS_TUTORIAL,
+    TutorialTargets.SETTINGS_HISTORY
+)
+
+/** Разделы с их позициями в ленте; работает и как проверка при старте. */
+private val SETTINGS_SECTION_INDEX: Map<String, Int> =
+    SETTINGS_SECTION_ORDER.withIndex().associate { (index, key) -> key to index }
+
+/**
+ * Позиция раздела [key] в ленте настроек.
+ *
+ * Отсутствие ключа — ошибка в константах (план есть, а раздела нет), и падать
+ * на ней лучше сразу, чем молча прокрутить ленту не туда.
+ */
+private fun settingsSectionIndex(key: String): Int = SETTINGS_SECTION_INDEX.getValue(key)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -154,34 +180,35 @@ fun SettingsScreen(
 
     // Обучение само раскрывает нужную группу и прокручивает список: без этого
     // подсказки про уведомления, справку и историю висели бы на свёрнутых
-    // группах и на элементах за пределами экрана. Индекс — позиция группы в
-    // ленте ниже: приложение (0), тренировки (1), справка (2), история (3).
+    // группах и на элементах за пределами экрана. Позиция группы берётся из
+    // [SETTINGS_SECTION_ORDER], а не пишется числом в каждом плане: иначе новый
+    // раздел в ленте молча сдвинул бы подсказки на соседние блоки.
     TutorialScreenTargets(
         registry = tutorial.targets,
         plans = mapOf(
             TutorialTargets.SETTINGS_APP_GROUP to lazyListScrollPlan(
                 state = settingsListState,
-                index = 0,
+                index = settingsSectionIndex(TutorialTargets.SETTINGS_APP_GROUP),
                 prepare = { if (!appSettingsExpanded) appSettingsExpanded = true }
             ),
             TutorialTargets.SETTINGS_NOTIFICATIONS to lazyListScrollPlan(
                 state = settingsListState,
-                index = 0,
+                index = settingsSectionIndex(TutorialTargets.SETTINGS_APP_GROUP),
                 prepare = { if (!appSettingsExpanded) appSettingsExpanded = true }
             ),
             TutorialTargets.SETTINGS_WORKOUT_GROUP to lazyListScrollPlan(
                 state = settingsListState,
-                index = 1,
+                index = settingsSectionIndex(TutorialTargets.SETTINGS_WORKOUT_GROUP),
                 prepare = { if (!workoutSettingsExpanded) workoutSettingsExpanded = true }
             ),
             TutorialTargets.SETTINGS_TUTORIAL to lazyListScrollPlan(
                 state = settingsListState,
-                index = 2,
+                index = settingsSectionIndex(TutorialTargets.SETTINGS_TUTORIAL),
                 prepare = { if (!helpExpanded) helpExpanded = true }
             ),
             TutorialTargets.SETTINGS_HISTORY to lazyListScrollPlan(
                 state = settingsListState,
-                index = 3,
+                index = settingsSectionIndex(TutorialTargets.SETTINGS_HISTORY),
                 prepare = { if (!historyExpanded) historyExpanded = true }
             )
         ),

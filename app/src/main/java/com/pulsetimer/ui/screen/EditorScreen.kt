@@ -86,6 +86,20 @@ import com.pulsetimer.viewmodel.TimerViewModel
 import kotlinx.coroutines.delay
 import kotlin.math.absoluteValue
 
+/**
+ * Позиция карточки параметров тренировки в ленте редактора: она стоит первой.
+ */
+private const val EDITOR_TEMPLATE_ITEM_INDEX = 0
+
+/**
+ * Позиция первого интервала в ленте редактора.
+ *
+ * Перед карточками интервалов идёт заголовок «Интервалы», поэтому первый
+ * интервал — третий элемент ленты. Оба шага про интервал (сама карточка и её
+ * кнопки) ведут к одному и тому же элементу.
+ */
+private const val EDITOR_FIRST_INTERVAL_ITEM_INDEX = 2
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun EditorScreen(
@@ -268,22 +282,23 @@ fun EditorScreen(
 
     // Обучение само прокручивает ленту редактора: карточка интервала может
     // оказаться ниже экрана, и тогда подсветка шага «повисла» бы в пустоте.
-    // Индексы — позиции в ленте ниже: параметры тренировки (0), заголовок
-    // «Интервалы» (1), первый интервал (2).
+    // Позиции берутся из именованных констант: числа в плане приходилось бы
+    // сверять с разметкой на глаз, и новая карточка в начале ленты молча
+    // сдвинула бы подсказки.
     TutorialScreenTargets(
         registry = tutorial.targets,
         plans = mapOf(
             TutorialTargets.EDITOR_TEMPLATE to lazyListScrollPlan(
                 state = intervalsListState,
-                index = 0
+                index = EDITOR_TEMPLATE_ITEM_INDEX
             ),
             TutorialTargets.EDITOR_INTERVAL to lazyListScrollPlan(
                 state = intervalsListState,
-                index = 2
+                index = EDITOR_FIRST_INTERVAL_ITEM_INDEX
             ),
             TutorialTargets.EDITOR_INTERVAL_ACTIONS to lazyListScrollPlan(
                 state = intervalsListState,
-                index = 2
+                index = EDITOR_FIRST_INTERVAL_ITEM_INDEX
             )
         ),
         // Стрелка «назад»: обучение возвращает пользователя к списку тренировок.
