@@ -68,6 +68,11 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -182,6 +187,10 @@ fun CoachMarkOverlay(
     Box(
         modifier = modifier
             .fillMaxSize()
+            // Для скринридера слой — отдельная область с заголовком текущего шага:
+            // без этого он читал бы интерфейс под затемнением, до которого
+            // пользователь сейчас всё равно не может добраться.
+            .semantics { paneTitle = "Обучение: ${step.title}" }
             .onSizeChanged { size ->
                 // Размер окна нужен обучению, чтобы центрировать цель прокруткой.
                 controller.viewport = size
@@ -223,7 +232,9 @@ fun CoachMarkOverlay(
             contentAlignment = Alignment.Center
         ) {
             CircularProgressIndicator(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .semantics { contentDescription = "Подготовка подсказки" },
                 color = accent,
                 strokeWidth = 3.dp
             )
@@ -335,7 +346,13 @@ private fun CoachMarkTooltip(
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 16.dp)
     ) {
-        Column(modifier = Modifier.padding(20.dp)) {
+        Column(
+            modifier = Modifier
+                .padding(20.dp)
+                // Текст шага меняется на месте, без смены экрана: помечаем его
+                // «живой областью», чтобы скринридер сам объявлял новую подсказку.
+                .semantics { liveRegion = LiveRegionMode.Polite }
+        ) {
             AnimatedContent(
                 targetState = step,
                 transitionSpec = {
