@@ -285,9 +285,11 @@ fun EditorScreen(
     // Позиции берутся из именованных констант: числа в плане приходилось бы
     // сверять с разметкой на глаз, и новая карточка в начале ленты молча
     // сдвинула бы подсказки.
-    TutorialScreenTargets(
-        registry = tutorial.targets,
-        plans = mapOf(
+    // Карты помним: планы закрываются над стабильным состоянием ленты, а
+    // действие — над колбэками экрана, поэтому пересобирать их на каждой
+    // рекомпозиции незачем.
+    val editorTutorialPlans = remember(intervalsListState) {
+        mapOf(
             TutorialTargets.EDITOR_TEMPLATE to lazyListScrollPlan(
                 state = intervalsListState,
                 index = EDITOR_TEMPLATE_ITEM_INDEX
@@ -300,14 +302,20 @@ fun EditorScreen(
                 state = intervalsListState,
                 index = EDITOR_FIRST_INTERVAL_ITEM_INDEX
             )
-        ),
-        // Стрелка «назад»: обучение возвращает пользователя к списку тренировок.
-        actions = mapOf(
-            TutorialTargets.EDITOR_BACK to {
-                viewModel.clearSelectedTemplate()
-                onBack()
-            }
         )
+    }
+    TutorialScreenTargets(
+        registry = tutorial.targets,
+        plans = editorTutorialPlans,
+        // Стрелка «назад»: обучение возвращает пользователя к списку тренировок.
+        actions = remember(viewModel, onBack) {
+            mapOf(
+                TutorialTargets.EDITOR_BACK to {
+                    viewModel.clearSelectedTemplate()
+                    onBack()
+                }
+            )
+        }
     )
 
     Scaffold(

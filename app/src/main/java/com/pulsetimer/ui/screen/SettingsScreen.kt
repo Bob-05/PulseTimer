@@ -183,9 +183,11 @@ fun SettingsScreen(
     // группах и на элементах за пределами экрана. Позиция группы берётся из
     // [SETTINGS_SECTION_ORDER], а не пишется числом в каждом плане: иначе новый
     // раздел в ленте молча сдвинул бы подсказки на соседние блоки.
-    TutorialScreenTargets(
-        registry = tutorial.targets,
-        plans = mapOf(
+    // Карты помним: лямбды планов закрываются над состоянием групп (это
+    // стабильные холдеры `rememberSaveable`), поэтому пересобирать их на каждой
+    // рекомпозиции незачем.
+    val settingsTutorialPlans = remember(settingsListState) {
+        mapOf(
             TutorialTargets.SETTINGS_APP_GROUP to lazyListScrollPlan(
                 state = settingsListState,
                 index = settingsSectionIndex(TutorialTargets.SETTINGS_APP_GROUP),
@@ -211,13 +213,17 @@ fun SettingsScreen(
                 index = settingsSectionIndex(TutorialTargets.SETTINGS_HISTORY),
                 prepare = { if (!historyExpanded) historyExpanded = true }
             )
-        ),
+        )
+    }
+    TutorialScreenTargets(
+        registry = tutorial.targets,
+        plans = settingsTutorialPlans,
         // Стрелка «назад»: обучение возвращает пользователя к списку тренировок.
         // Без зарегистрированного действия шаг-переход не смог бы покинуть экран,
         // и тур пошёл бы дальше по шагам главного экрана, оставаясь в настройках.
-        actions = mapOf(
-            TutorialTargets.SETTINGS_BACK to onBack
-        )
+        actions = remember(onBack) {
+            mapOf(TutorialTargets.SETTINGS_BACK to onBack)
+        }
     )
 
     var pendingSignal by remember { mutableStateOf<PendingSignal?>(null) }
