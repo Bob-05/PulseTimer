@@ -153,17 +153,6 @@ fun CoachMarkOverlay(
     val marginPx = with(density) { 16.dp.toPx() }
     val strokePx = with(density) { 3.dp.toPx() }
 
-    val pulse = rememberInfiniteTransition(label = "coach_mark_pulse")
-    val pulseAlpha by pulse.animateFloat(
-        initialValue = 1f,
-        targetValue = 0.35f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(900),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "coach_mark_pulse_alpha"
-    )
-
     // Цель может отсутствовать (пустой список тренировок, цель ещё не
     // скомпонована) — тогда шаг показывается по центру, без подсветки.
     val holeRect = step.targetKey
@@ -172,6 +161,11 @@ fun CoachMarkOverlay(
             val shifted = bounds.translate(-overlayOrigin.x, -overlayOrigin.y)
             spotlightRect(shifted, overlaySize, holeInsetPx)
         }
+
+    // Пульсация «дырки» идёт бесконечно: запускаем её только когда подсветка
+    // действительно видна. Скрытая анимация всё равно кадр за кадром меняла бы
+    // альфу и не давала композиции уснуть.
+    val pulseAlpha = highlightPulseAlpha(visible = reveal > 0f && holeRect != null)
 
     // «Дырка» переезжает к новой цели не рывком, а за 280 мс: переход между
     // шагами читается как перевод фокуса. Пока шаг готовится, видно только
@@ -451,6 +445,34 @@ private fun CoachMarkTooltip(
             }
         }
     }
+}
+
+/**
+ * Альфа пульсации подсветки; [visible] = `false` — подсветки на экране нет.
+ *
+ * Анимацию запускаем только когда она видна: бесконечный переход иначе крутится
+ * всё время, пока открыт слой, и держит композицию в постоянной перерисовке даже
+ * без подсветки. Условие вынесено сюда, чтобы в композиции не было `remember`
+ * под ветвлением.
+ */
+@Composable
+private fun highlightPulseAlpha(visible: Boolean): Float =
+    if (visible) pulseAlphaAnimation() else 1f
+
+/** Бесконечная пульсация подсветки: от полной непрозрачности к приглушённой. */
+@Composable
+private fun pulseAlphaAnimation(): Float {
+    val pulse = rememberInfiniteTransition(label = "coach_mark_pulse")
+    val alpha by pulse.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.35f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "coach_mark_pulse_alpha"
+    )
+    return alpha
 }
 
 /** Полоска прогресса: пройденные точки акцентные, текущая — вытянутая. */
