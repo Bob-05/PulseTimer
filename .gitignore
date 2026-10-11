@@ -11,6 +11,10 @@
 /build
 /app/build
 /app/release
+# Секреты подписи релиза: параметры ключа и сами ключи не коммитим.
+keystore.properties
+*.jks
+*.keystore
 /gradle/gradle-daemon-jvm.properties
 /.idea
 /.kotlin

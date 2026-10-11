@@ -5,7 +5,7 @@
 **Приложение бесплатное.** Без рекламы, без подписок, без встроенных покупок.
 
 ![Android](https://img.shields.io/badge/Android-9%2B-3DDC84?logo=android&logoColor=white)
-![Kotlin](https://img.shields.io/badge/Kotlin-1.9%2B-7F52FF?logo=kotlin&logoColor=white)
+![Kotlin](https://img.shields.io/badge/Kotlin-2.2%2B-7F52FF?logo=kotlin&logoColor=white)
 ![Compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?logo=jetpackcompose&logoColor=white)
 
 ---
@@ -28,6 +28,7 @@
 - [Известные ограничения](#известные-ограничения)
 - [Тестирование](#тестирование)
 - [Приватность и данные](#приватность-и-данные)
+- [История версий](#история-версий)
 - [Лицензия](#лицензия)
 - [Документы](#документы)
 
@@ -63,7 +64,7 @@
 
 При **первом запуске** приложение показывает экран согласия с Политикой конфиденциальности и Пользовательским соглашением. Оба документа можно открыть во встроенном просмотрщике до принятия. Пока согласие не получено, доступ к функциям приложения заблокирован; при отказе приложение закрывается.
 
-Повторно открыть документы можно из `Настройки → Документы`.
+Повторно открыть документы можно из `Настройки → Справка → Документы`.
 
 ## Требования
 
@@ -81,7 +82,26 @@ cd PulseTimer
 
 APK появится в `app/build/outputs/apk/debug/app-debug.apk`.
 
-Для релизной сборки — `./gradlew assembleRelease` (потребуется настроить подпись в `build.gradle.kts` или через Android Studio → Build → Generate Signed Bundle / APK).
+Для релизной сборки — `./gradlew assembleRelease`. Если в корне проекта лежит `keystore.properties` (см. ниже), APK/AAB подписывается автоматически; без него сборка остаётся неподписанной, и её можно подписать через Android Studio → Build → Generate Signed Bundle / APK.
+
+**Подпись релиза.** Создайте в корне проекта файл `keystore.properties` (он в `.gitignore` и в репозиторий не попадает):
+
+```properties
+storeFile=../pulsetimer-release.jks
+storePassword=...
+keyAlias=pulsetimer
+keyPassword=...
+```
+
+`storeFile` указывается относительно модуля `app`. Сам ключ (`*.jks`) тоже не коммитится.
+
+Для публикации в RuStore удобнее собрать подписанный бандл:
+
+```bash
+./gradlew bundleRelease
+```
+
+Артефакты появятся в `app/build/outputs/apk/release/` и `app/build/outputs/bundle/release/`.
 
 Задача `copyLegalDocs` копирует `PRIVACY_POLICY.md` и `TERMS_OF_USE.md` в `app/build/generated/legalAssets/legal/`. Gradle подключает этот сгенерированный каталог как источник assets при сборке; вручную копировать документы в `src/main/assets/` не нужно.
 
@@ -95,7 +115,8 @@ app/src/main/java/com/pulsetimer/
 │   ├── AppSettings.kt                 # Хранилище настроек (SharedPreferences)
 │   ├── dao/TimerDao.kt                # Room DAO
 │   ├── database/AppDatabase.kt        # Room БД + миграции + предзаполнение
-│   └── entity/                        # TemplateEntity, IntervalEntity, SessionLogEntity
+│   └── entity/                        # TemplateEntity, IntervalEntity, SessionLogEntity,
+│                                      # SessionIntervalLogEntity
 ├── service/
 │   └── TimerService.kt                # Foreground-сервис таймера
 ├── speech/
@@ -107,7 +128,7 @@ app/src/main/java/com/pulsetimer/
 │   ├── navigation/Screen.kt
 │   ├── screen/                        # LegalConsent, LegalDocument, LaunchAnimation,
 │   │                                  # Onboarding, Main, Execution, Editor,
-│   │                                  # Settings, WorkoutEmojiPicker
+│   │                                  # Settings, SessionDetail, WorkoutEmojiPicker
 │   ├── theme/                         # Theme.kt, Type.kt
 │   └── tutorial/                      # Coach marks: Controller, Steps, Targets, Overlay
 ├── util/
@@ -190,7 +211,8 @@ app/src/main/res/
 │  LegalConsentScreen, LegalDocumentScreen,         │
 │  LaunchAnimationScreen, OnboardingScreen,         │
 │  MainScreen, ExecutionScreen,                     │
-│  EditorScreen, SettingsScreen                     │
+│  EditorScreen, SettingsScreen,                    │
+│  SessionDetailScreen                              │
 └───────────────────┬───────────────────────────────┘
                     │ StateFlow / collectAsState
 ┌───────────────────▼───────────────────────────────┐
@@ -204,9 +226,9 @@ app/src/main/res/
 │  AppDatabase        │        │  TimerService      │
 │  (templates,        │        │  - state Flow      │
 │   intervals,        │        │  - audio / TTS     │
-│   session_logs)     │        │  - vibrator        │
-└─────────────────────┘        │  - wake lock       │
-                               └─────────┬──────────┘
+│   session_logs,     │        │  - vibrator        │
+│   session_interval_ │        │  - wake lock       │
+│   logs)             │        └─────────┬──────────┘
                                          │
                                ┌─────────▼──────────┐
                                │  SpeechEngine      │
@@ -222,7 +244,7 @@ app/src/main/res/
 
 ## Модель данных
 
-### Room: `pulse_timer_database`, version = 3
+### Room: `pulse_timer_database`, version = 4
 
 #### `templates`
 
@@ -232,6 +254,7 @@ app/src/main/res/
 | name | String | Название |
 | description | String | Описание |
 | createdAt | Long | Timestamp создания |
+| sortOrder | Int | Ручной порядок карточки (больше — выше) |
 | iconEmoji | String | Эмодзи (по умолчанию 🏋️) |
 | backgroundType | String | `COLOR` / `CUSTOM_IMAGE` / `VIDEO` |
 | backgroundValue | String | URI или пусто |
@@ -264,8 +287,29 @@ app/src/main/res/
 | startedAt | Long | Начало |
 | completedAt | Long? | Конец (`null` — прервана) |
 | totalDurationSeconds | Int | Фактическая длительность |
+| plannedDurationSeconds | Int | Плановая длительность (Σ интервалов) |
+| completedIntervals | Int | Сколько интервалов отработано |
+| totalIntervals | Int | Сколько интервалов было на старте |
+| lastIntervalIndex | Int | Индекс интервала, на котором сессия оборвалась (-1 — неизвестно) |
+| interrupted | Boolean | true — сессию прервала система, false — штатное завершение |
 
-**Миграции:** `1→2` (фоны, аудио, вибрация), `2→3` (эмодзи). Обе — `ALTER TABLE ADD COLUMN`.
+#### `session_interval_logs`
+
+Построчный лог интервалов внутри сессии: строки создаются на старте тренировки и обновляются по ходу, поэтому в историю попадают и оборванные сессии.
+
+| Поле | Тип | Описание |
+|---|---|---|
+| id | Long (PK) | Автогенерируется |
+| sessionLogId | Long (FK, CASCADE) | Родительская запись сессии |
+| name | String | Имя интервала на момент старта |
+| iconEmoji | String | Эмодзи интервала |
+| colorHex | String | Цвет интервала |
+| plannedSeconds | Int | Плановая длительность интервала |
+| actualSeconds | Int | Фактически отработанное время |
+| orderIndex | Int | Позиция внутри тренировки (0 — первый) |
+| wasSkipped | Boolean | true — интервал пропущен кнопкой «Пропустить» |
+
+**Миграции:** `1→2` (фоны, аудио, вибрация), `2→3` (эмодзи), `3→4` (ручной порядок тренировок + детальная история сессий).
 
 **Предзаполнение:** при первом создании БД добавляются 2 шаблона — «Табата» (20/10×8) и «Круговая» (30/30×3).
 
@@ -350,7 +394,8 @@ LegalConsent (первый запуск, обязательный)
            ├→ Editor/{templateId}
            ├→ Settings
            │   ├→ Onboarding (повторный показ)
-           │   └→ LegalDocument/{type}   (type = privacy | terms)
+           │   ├→ LegalDocument/{type}   (type = privacy | terms)
+           │   └→ SessionDetail/{logId}
 ```
 
 При завершении тренировки из Execution: `navigate(Main) { popUpTo(Main) { inclusive = true } }` — очищает стек, чтобы Main был один.
@@ -361,11 +406,13 @@ LegalConsent (первый запуск, обязательный)
 
 Управление версиями — через version catalog (`gradle/libs.versions.toml`).
 
-**minSdk 28** (Android 9), **targetSdk 36**. `versionCode = 1`, `versionName = "1.0"`.
+**minSdk 28** (Android 9), **targetSdk 36**. `versionCode = 2`, `versionName = "1.1"`.
 
 **Ключевые зависимости:** Room, Compose BOM, Material 3, Navigation Compose, Lifecycle, Coroutines.
 
 **R8:** отключён (`isMinifyEnabled = false`). При включении потребуются `-keep` правила для Room entities и DAO.
+
+**Подпись релиза:** параметры читаются из `keystore.properties` в корне проекта (см. раздел [Сборка](#сборка)); файл и сам ключ не коммитятся.
 
 ---
 
@@ -417,6 +464,25 @@ LegalConsent (первый запуск, обязательный)
 - [ ] Карточка шаблона с длинным описанием → «Показать полностью» открывает модальное окно
 - [ ] Карточки шаблонов имеют одинаковый размер
 - [ ] В просмотрщике документов корректно отображаются маркированные списки, таблицы и inline-код
+- [ ] История: раскрыть группу «История тренировок» → тап по записи открывает разбор по интервалам (план/факт, пропуски) → «Назад» возвращает в настройки
+- [ ] Обновление с 1.0: установка 1.1 поверх старой версии не теряет шаблоны, историю и настройки (миграция БД `3→4`)
+
+---
+
+## История версий
+
+### 1.1 — текущая
+
+- **Интерактивное обучение** (coach marks) на всех экранах: сквозной тур после онбординга, подсказки при первом заходе, повторный запуск из «Настройки → Справка»; демонстрационная тренировка завершается вместе с туром.
+- **Детальная история тренировок**: разбор по интервалам (план/факт, пропуски), признак прерывания, экран деталей записи, очистка истории.
+- **Ручной порядок тренировок** — перестановка карточек стрелками ↑/↓ (миграция БД `3→4`).
+- Дублирование интервала в один тап, редактор собственного сигнала с выбором фрагмента.
+- Юридические документы открываются во встроенном просмотрщике + кнопка «Открыть на GitHub».
+
+### 1.0 — первая публикация
+
+- Интервальный таймер: шаблоны, интервалы, фоновые изображения/видео, музыка, 6 встроенных сигналов, голосовые подсказки, вибрация, работа в фоне.
+- Экран согласия с документами, онбординг из 5 страниц, 3 темы, 7 анимаций перехода.
 
 ---
 
@@ -446,5 +512,5 @@ Copyright (c) 2026 Bob-05.
 
 ## Документы
 
-- [Политика конфиденциальности](PRIVACY_POLICY.md)
-- [Пользовательское соглашение](TERMS_OF_USE.md)
+- [Политика конфиденциальности](PRIVACY_POLICY.md) — версия 1.1
+- [Пользовательское соглашение](TERMS_OF_USE.md) — версия 1.1

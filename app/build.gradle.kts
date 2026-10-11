@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -12,6 +14,17 @@ plugins {
 // его как «тип с платформенной nullability» — это даёт weak warning в IDE.
 val legalAssetsDir: Provider<Directory> =
     layout.buildDirectory.dir("generated/legalAssets")
+
+// Параметры подписи релиза читаем из keystore.properties в корне проекта.
+// Файл не коммитится (см. .gitignore), поэтому секреты в репозиторий не попадают.
+// Если файла нет, release собирается без подписи — его можно подписать вручную
+// через Android Studio → Build → Generate Signed Bundle / APK.
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        keystorePropertiesFile.inputStream().use { load(it) }
+    }
+}
 
 val copyLegalDocs by tasks.registering(Copy::class) {
     from(rootProject.file("PRIVACY_POLICY.md")) { into("legal") }
@@ -33,14 +46,28 @@ android {
         applicationId = "com.bahtiarazizov.pulsetimer"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        // Конфигурация создаётся только при наличии keystore.properties,
+        // иначе release остаётся неподписанным — как было раньше.
+        if (keystorePropertiesFile.exists()) {
+            create("release") {
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.findByName("release")
             // R8 отключён. Правила proguard намеренно не подключены,
             // чтобы не создавать иллюзию работающей обфускации.
             // При включении R8 — вернуть proguardFiles(...) и добавить
