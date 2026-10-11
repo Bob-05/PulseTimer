@@ -86,6 +86,7 @@ import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.data.entity.SessionLogEntity
 import com.pulsetimer.ui.component.CustomSignalEditorDialog
 import com.pulsetimer.ui.component.SignalPreviewPlayer
+import com.pulsetimer.ui.tutorial.SETTINGS_START_DELAY_MILLIS
 import com.pulsetimer.ui.tutorial.TutorialController
 import com.pulsetimer.ui.tutorial.TutorialScreenTargets
 import com.pulsetimer.ui.tutorial.TutorialSteps
@@ -164,7 +165,7 @@ fun SettingsScreen(
             AppSettingsStore.update { it.copy(settingsTutorialCompleted = true) }
         },
         // Даём списку разложиться и отработать анимации появления групп.
-        startDelayMillis = 700L
+        startDelayMillis = SETTINGS_START_DELAY_MILLIS
     )
     val viewModel: TimerViewModel = viewModel()
     val logs by viewModel.sessionLogs.collectAsStateWithLifecycle()

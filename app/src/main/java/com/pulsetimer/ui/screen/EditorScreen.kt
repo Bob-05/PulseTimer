@@ -75,6 +75,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.data.entity.IntervalEntity
+import com.pulsetimer.ui.tutorial.EDITOR_START_DELAY_MILLIS
 import com.pulsetimer.ui.tutorial.TutorialController
 import com.pulsetimer.ui.tutorial.TutorialScreenTargets
 import com.pulsetimer.ui.tutorial.TutorialSteps
@@ -124,7 +125,7 @@ fun EditorScreen(
         },
         // Ждём, пока подгрузятся шаблон и интервалы: без них часть шагов
         // осталась бы без подсветки.
-        startDelayMillis = 900L
+        startDelayMillis = EDITOR_START_DELAY_MILLIS
     )
 
     var name by remember(templateId) { mutableStateOf("") }

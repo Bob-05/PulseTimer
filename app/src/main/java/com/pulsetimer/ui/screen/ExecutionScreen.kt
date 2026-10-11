@@ -96,6 +96,7 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pulsetimer.data.AppSettingsStore
+import com.pulsetimer.ui.tutorial.EXECUTION_START_DELAY_MILLIS
 import com.pulsetimer.ui.tutorial.LIGHT_TUTORIAL_SCRIM_ALPHA
 import com.pulsetimer.ui.tutorial.TutorialController
 import com.pulsetimer.ui.tutorial.TutorialScreenTargets
@@ -149,7 +150,7 @@ fun ExecutionScreen(
         onCompleted = {
             AppSettingsStore.update { it.copy(executionTutorialCompleted = true) }
         },
-        startDelayMillis = 400L,
+        startDelayMillis = EXECUTION_START_DELAY_MILLIS,
         scrimAlpha = LIGHT_TUTORIAL_SCRIM_ALPHA
     )
 

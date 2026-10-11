@@ -78,6 +78,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pulsetimer.data.AppSettingsStore
 import com.pulsetimer.data.entity.TemplateEntity
 import com.pulsetimer.service.TimerService
+import com.pulsetimer.ui.tutorial.STEP_START_DELAY_MILLIS
 import com.pulsetimer.ui.tutorial.TutorialController
 import com.pulsetimer.ui.tutorial.TutorialScrollPlan
 import com.pulsetimer.ui.tutorial.TutorialScreenTargets
@@ -138,7 +139,7 @@ fun MainScreen(
         // Первый показ ждёт, пока закончится появление контента, иначе
         // подсветка «дрожит» вместе с анимацией входа главного экрана.
         // Запрошенное из «Настроек» обучение показываем без задержки.
-        startDelayMillis = if (settings.tutorialRequested) 0L else 600L
+        startDelayMillis = if (settings.tutorialRequested) 0L else STEP_START_DELAY_MILLIS
     )
 
     MainScreenScaffold(
