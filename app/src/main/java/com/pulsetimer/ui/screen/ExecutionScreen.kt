@@ -159,6 +159,37 @@ fun ExecutionScreen(
     // пользователь, закрывший подсказки на шаге паузы, оставил бы тренировку
     // стоять. Свою паузу пользователя обучение не трогает.
     var pausedByTutorial by remember { mutableStateOf(false) }
+
+    /**
+     * Завершение тренировки — тот же путь, что у кнопки «✕»: остановить сервис и
+     * уйти с экрана отсчёта. Вынесено в лямбду, потому что на финальном шаге
+     * тура это действие «нажимает» обучение: тренировку запустил сам тур, и
+     * оставить её идущей нельзя, иначе пользователь остался бы в отсчёте,
+     * которого не включал.
+     *
+     * Идемпотентность здесь обязательна: последний шаг тура и подстраховка ниже
+     * могут сработать в одном кадре, а двойной `onFinish` увёл бы экран дважды.
+     */
+    var closingWorkout by remember(templateId) { mutableStateOf(false) }
+    val closeWorkout: () -> Unit = {
+        if (!closingWorkout) {
+            closingWorkout = true
+            viewModel.stopTimer()
+            onFinish()
+        }
+    }
+
+    /**
+     * Тренировку открыл сквозной тур: на момент первого показа экрана обучение
+     * уже шло, значит, это оно «нажало» «СТАРТ» (см. шаг «Запустим тренировку»).
+     *
+     * Запоминаем на старте экрана, потому что дальше это уже не восстановить:
+     * подсказки по экрану отсчёта при первом заходе стартуют позже, а тур мог к
+     * тому времени закончиться. Свою тренировку пользователь запускает без
+     * обучения — такой отсчёт тур не трогает.
+     */
+    var tourWorkoutToClose by remember(templateId) { mutableStateOf(tutorial.isRunning) }
+
     TutorialScreenTargets(
         registry = tutorial.targets,
         actions = mapOf(
@@ -171,13 +202,33 @@ fun ExecutionScreen(
                     pausedByTutorial = false
                     viewModel.resumeTimer()
                 }
-            }
+            },
+            TutorialTargets.EXECUTION_CLOSE to closeWorkout
         )
     )
     LaunchedEffect(tutorial.isRunning, pausedByTutorial) {
         if (pausedByTutorial && !tutorial.isRunning) {
             pausedByTutorial = false
             viewModel.resumeTimer()
+        }
+    }
+
+    // Тур запустил тренировку — он же её и закрывает, чем бы обучение ни
+    // закончилось: последним шагом, «Пропустить» или системным «Назад». Иначе
+    // демонстрационный отсчёт остался бы идти сам по себе, а пользователь — на
+    // экране, которого не включал.
+    LaunchedEffect(tourWorkoutToClose, tutorial.isRunning, isFinished) {
+        if (!tourWorkoutToClose) return@LaunchedEffect
+        when {
+            // Тренировка доиграла сама: закрывать нечего, но обязательство снимаем
+            // — иначе «Повторить» на экране результатов запустило бы отсчёт,
+            // который обучение тут же остановило бы.
+            isFinished -> tourWorkoutToClose = false
+            // Обучение закончилось, а отсчёт всё ещё идёт — завершаем его.
+            !tutorial.isRunning -> {
+                tourWorkoutToClose = false
+                closeWorkout()
+            }
         }
     }
 
@@ -338,7 +389,7 @@ fun ExecutionScreen(
                 animatedBackgrounds = settings.animatedBackgrounds,
                 animateInitialEntry = !initialEntryCompleted && phase.index == 0,
                 tutorialTargets = tutorial.targets,
-                onClose = { viewModel.stopTimer(); onFinish() },
+                onClose = closeWorkout,
                 onPauseToggle = {
                     if (timerState.isPaused) viewModel.resumeTimer() else viewModel.pauseTimer()
                 },

@@ -30,12 +30,26 @@ class TutorialStepsTest {
                 TutorialTargets.SETTINGS_BACK,
                 TutorialTargets.START,
                 TutorialTargets.EXECUTION_PAUSE,
-                TutorialTargets.EXECUTION_RESUME
+                TutorialTargets.EXECUTION_RESUME,
+                // Тур сам запустил демонстрационную тренировку — сам же её и
+                // завершает, иначе отсчёт остался бы идти после обучения.
+                TutorialTargets.EXECUTION_CLOSE
             ),
             pressSteps.map { step -> step.targetKey }
         )
         // Подпись кнопки у шага-перехода проверяет сам TutorialStep: без неё
         // пользователь не отличит «обучение нажмёт за вас» от кнопки «Далее».
+    }
+
+    @Test
+    fun standaloneHintsDoNotCloseSomeoneElsesWorkout() {
+        val steps = TutorialSteps.EXECUTION_SCREEN
+
+        // Подсказки при первом заходе на экран отсчёта рассказывают про «✕», но
+        // не завершают чужую тренировку: её запустил пользователь, а не обучение.
+        val closeStep = steps.first { step -> step.targetKey == TutorialTargets.EXECUTION_CLOSE }
+        assertFalse(closeStep.pressTarget)
+        assertEquals(null, closeStep.actionLabel)
     }
 
     @Test
