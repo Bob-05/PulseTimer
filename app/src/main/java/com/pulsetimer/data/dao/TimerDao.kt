@@ -74,6 +74,37 @@ interface TimerDao {
         updateIntervals(intervals)
     }
 
+    /**
+     * Одноразовое чтение интервалов. В отличие от [getIntervalsByTemplateId]
+     * его можно вызывать внутри транзакции: Flow-запрос Room выполнять в
+     * транзакции не разрешает.
+     */
+    @Query("SELECT * FROM intervals WHERE templateId = :templateId ORDER BY orderIndex ASC, id ASC")
+    suspend fun getIntervalsByTemplateIdOnce(templateId: Long): List<IntervalEntity>
+
+    /**
+     * Дублирование интервала: копия [interval] встаёт строго под оригиналом.
+     *
+     * Вставка копии и сдвиг порядковых номеров идут одной транзакцией — иначе
+     * лента успела бы показать промежуточное состояние, а при равных
+     * `orderIndex` сортировка развела бы строки по `id` и копия оказалась бы
+     * под следующим интервалом, а не под оригиналом. Поэтому номера ниже
+     * оригинала сдвигаются на единицу, освобождая позицию `sourceIndex + 1`
+     * (см. [shiftOrderIndexesForCopy]).
+     *
+     * @return id копии или `-1`, если оригинал уже удалён.
+     */
+    @Transaction
+    suspend fun insertIntervalCopy(interval: IntervalEntity): Long {
+        val ordered = getIntervalsByTemplateIdOnce(interval.templateId)
+        val sourceIndex = ordered.indexOfFirst { it.id == interval.id }
+        if (sourceIndex == -1) return -1L
+
+        val copyId = insertInterval(interval.copy(id = 0L, orderIndex = sourceIndex + 1))
+        updateIntervals(shiftOrderIndexesForCopy(ordered, sourceIndex))
+        return copyId
+    }
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertIntervals(intervals: List<IntervalEntity>)
 

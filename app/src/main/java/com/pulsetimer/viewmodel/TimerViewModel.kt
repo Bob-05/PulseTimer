@@ -5,6 +5,7 @@ import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pulsetimer.data.database.AppDatabase
+import com.pulsetimer.data.dao.TimerDao
 import com.pulsetimer.data.entity.IntervalEntity
 import com.pulsetimer.data.entity.SessionIntervalLogEntity
 import com.pulsetimer.data.entity.SessionLogEntity
@@ -82,9 +83,31 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
     private val _recentlyAddedTemplateId = MutableStateFlow<Long?>(null)
     val recentlyAddedTemplateId: StateFlow<Long?> = _recentlyAddedTemplateId.asStateFlow()
 
+    /**
+     * ID интервала, который пользователь только что продублировал.
+     *
+     * Редактор использует это значение, чтобы дождаться появления копии в
+     * скомпонованном списке, при необходимости прокрутить ленту к ней и только
+     * затем проиграть анимацию появления. Без такого сигнала карточка,
+     * оказавшаяся за пределами экрана, «выросла» бы незаметно.
+     */
+    private val _recentlyDuplicatedIntervalId = MutableStateFlow<Long?>(null)
+    val recentlyDuplicatedIntervalId: StateFlow<Long?> = _recentlyDuplicatedIntervalId.asStateFlow()
+
     fun selectTemplate(id: Long) { selectedTemplateId.value = id }
 
     fun clearSelectedTemplate() { selectedTemplateId.value = null }
+
+    /**
+     * Сброс флага после проигрывания анимации появления копии.
+     * Принимает id, чтобы карточка, чья анимация завершилась с задержкой, не
+     * сбрасывала флаг уже другой (только что продублированной) карточки.
+     */
+    fun clearRecentlyDuplicatedInterval(id: Long) {
+        if (_recentlyDuplicatedIntervalId.value == id) {
+            _recentlyDuplicatedIntervalId.value = null
+        }
+    }
 
     /**
      * Проверяет, есть ли у шаблона интервалы, до запуска сервиса.
@@ -200,31 +223,32 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Дублирование интервала внутри той же тренировки.
      *
-     * Копия вставляется сразу под оригиналом и получает имя с суффиксом
-     * «(копия)»; перед добавлением суффикса он снимается, иначе дубликат
-     * дубликата превращался бы в «X (копия) (копия) (копия)».
-     * Копируются все настройки: длительность, цвет, фон и мелодия.
-     * После вставки порядковые номера нормализуются в `0..n-1`, чтобы в
-     * `orderIndex` не оставалось «дыр» и дублей.
+     * Копия встаёт строго под оригиналом и получает имя с суффиксом «(копия)»;
+     * перед добавлением суффикса он снимается, иначе дубликат дубликата
+     * превращался бы в «X (копия) (копия) (копия)». Копируются все настройки:
+     * длительность, цвет, фон и мелодия.
+     *
+     * Вставка копии и сдвиг порядковых номеров выполняются одной транзакцией
+     * ([TimerDao.insertIntervalCopy]): лента не успевает показать промежуточное
+     * состояние, а копия не может «перескочить» через следующий интервал.
+     *
+     * Id копии публикуется в [recentlyDuplicatedIntervalId] — редактор ждёт
+     * появления карточки в списке, при необходимости прокручивает к ней ленту
+     * и только затем проигрывает анимацию появления.
      */
     fun duplicateInterval(templateId: Long, intervalId: Long) {
         viewModelScope.launch {
-            val intervals = dao.getIntervalsByTemplateId(templateId).first()
-            val sourceIndex = intervals.indexOfFirst { it.id == intervalId }
-            if (sourceIndex == -1) return@launch
+            val source = dao.getIntervalsByTemplateId(templateId).first()
+                .firstOrNull { it.id == intervalId } ?: return@launch
 
-            val source = intervals[sourceIndex]
-            dao.insertInterval(
+            val copyId = dao.insertIntervalCopy(
                 source.copy(
-                    id = 0L,
-                    name = source.name.removeSuffix(DUPLICATE_SUFFIX) + DUPLICATE_SUFFIX,
-                    orderIndex = sourceIndex + 1
+                    name = source.name.removeSuffix(DUPLICATE_SUFFIX) + DUPLICATE_SUFFIX
                 )
             )
-            val updated = dao.getIntervalsByTemplateId(templateId).first()
-            dao.reorderIntervals(
-                updated.mapIndexed { index, interval -> interval.copy(orderIndex = index) }
-            )
+            if (copyId > 0L) {
+                _recentlyDuplicatedIntervalId.value = copyId
+            }
         }
     }
 

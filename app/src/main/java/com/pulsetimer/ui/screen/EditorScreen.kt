@@ -4,6 +4,10 @@ import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -60,6 +64,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -84,7 +89,12 @@ import com.pulsetimer.ui.tutorial.TutorialTrigger
 import com.pulsetimer.ui.tutorial.lazyListScrollPlan
 import com.pulsetimer.ui.tutorial.tutorialTarget
 import com.pulsetimer.viewmodel.TimerViewModel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlin.math.absoluteValue
 
 /**
@@ -100,6 +110,21 @@ private const val EDITOR_TEMPLATE_ITEM_INDEX = 0
  * кнопки) ведут к одному и тому же элементу.
  */
 private const val EDITOR_FIRST_INTERVAL_ITEM_INDEX = 2
+
+/**
+ * Пауза между появлением копии в списке и прокруткой к ней.
+ *
+ * За это время Compose успевает выполнить measure/layout новой карточки: без
+ * паузы `animateScrollToItem` стартовал бы по устаревшим координатам ленты.
+ */
+private const val INTERVAL_COPY_LAYOUT_DELAY_MILLIS = 50L
+
+/**
+ * Длительность проявления прозрачности копии. Масштаб доводится пружиной, а
+ * прозрачность — этим tween: фиксированное время гарантирует, что карточка
+ * станет полностью видимой, даже если пружина «догоняет» дольше.
+ */
+private const val INTERVAL_COPY_FADE_MILLIS = 320
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -135,6 +160,12 @@ fun EditorScreen(
     val latestDescription = rememberUpdatedState(description)
     val latestInitialized = rememberUpdatedState(initialized)
 
+    // ID только что продублированного интервала читается и в DisposableEffect
+    // (снятие флага при уходе с экрана), поэтому объявлен до него.
+    val recentlyDuplicatedIntervalId by
+        viewModel.recentlyDuplicatedIntervalId.collectAsStateWithLifecycle()
+    val latestDuplicatedIntervalId = rememberUpdatedState(recentlyDuplicatedIntervalId)
+
     LaunchedEffect(templateId) {
         viewModel.selectTemplate(templateId)
     }
@@ -163,6 +194,9 @@ fun EditorScreen(
                     latestDescription.value
                 )
             }
+            // Уход с экрана до того, как копия дошла до анимации, снимает флаг:
+            // иначе следующий заход в редактор прокрутил бы ленту к старой копии.
+            latestDuplicatedIntervalId.value?.let(viewModel::clearRecentlyDuplicatedInterval)
         }
     }
 
@@ -280,6 +314,43 @@ fun EditorScreen(
     var showAddDialog by remember { mutableStateOf(false) }
     var editingInterval by remember { mutableStateOf<IntervalEntity?>(null) }
     val intervalsListState = rememberLazyListState()
+
+    /**
+     * ID копии, к которой лента уже прокручена и которую можно анимировать.
+     *
+     * Пока значение `null`, «только что продублированная» карточка остаётся
+     * невидимой (см. инициализацию `Animatable` ниже). Так анимация появления
+     * не проигрывается, пока список ещё не долистался до копии.
+     */
+    var readyToAnimateIntervalId by remember { mutableStateOf<Long?>(null) }
+
+    /**
+     * Последовательная оркестрация: дождаться копии в СКОМПОНОВАННОМ списке →
+     * дать ленте measure/layout → прокрутить к ней → разрешить анимацию.
+     *
+     * Скролл пропускается, когда обучение уже само ведёт ленту: два
+     * одновременных `animateScrollToItem` подрались бы за состояние списка.
+     */
+    LaunchedEffect(Unit) {
+        viewModel.recentlyDuplicatedIntervalId
+            .filterNotNull()
+            .collect { copyId ->
+                // Ждём именно composed-состояние: значение StateFlow обновляется
+                // раньше, чем UI перекомпонуется, и scroll-вызов ушёл бы в no-op
+                // по устаревшим координатам.
+                val index = snapshotFlow { intervals.indexOfFirst { it.id == copyId } }
+                    .filter { it >= 0 }
+                    .first()
+
+                if (!tutorial.isRunning) {
+                    // Даём Compose measure/layout, чтобы копия получила размеры и
+                    // прокрутка не прыгнула мимо неё.
+                    delay(INTERVAL_COPY_LAYOUT_DELAY_MILLIS)
+                    intervalsListState.animateScrollToItem(index)
+                }
+                readyToAnimateIntervalId = copyId
+            }
+    }
 
     // Обучение само прокручивает ленту редактора: карточка интервала может
     // оказаться ниже экрана, и тогда подсветка шага «повисла» бы в пустоте.
@@ -530,6 +601,47 @@ fun EditorScreen(
                             }
                         }
                     }
+                    // Флаг «только что продублированный» фиксируем на момент
+                    // первой композиции карточки: если бы читали значение flow-а
+                    // на каждой рекомпозиции, сброс флага после анимации заставил
+                    // бы карточку переинициализировать Animatable и «мигнуть».
+                    val isNewlyDuplicated = remember(interval.id) {
+                        recentlyDuplicatedIntervalId == interval.id
+                    }
+                    val entryScale = remember(interval.id) {
+                        Animatable(if (isNewlyDuplicated) 0.88f else 1f)
+                    }
+                    val entryAlpha = remember(interval.id) {
+                        Animatable(if (isNewlyDuplicated) 0f else 1f)
+                    }
+
+                    // Ждём сигнала readyToAnimateIntervalId == interval.id — он
+                    // приходит уже ПОСЛЕ прокрутки ленты к копии. snapshotFlow.first
+                    // не отменяет эффект при изменении сигнала для другой карточки,
+                    // поэтому быстрое двойное дублирование отработает корректно.
+                    LaunchedEffect(interval.id) {
+                        if (!isNewlyDuplicated) return@LaunchedEffect
+                        snapshotFlow { readyToAnimateIntervalId }
+                            .first { it == interval.id }
+                        coroutineScope {
+                            launch {
+                                entryScale.animateTo(
+                                    targetValue = 1f,
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                                        stiffness = Spring.StiffnessMediumLow
+                                    )
+                                )
+                            }
+                            launch {
+                                entryAlpha.animateTo(
+                                    targetValue = 1f,
+                                    animationSpec = tween(durationMillis = INTERVAL_COPY_FADE_MILLIS)
+                                )
+                            }
+                        }
+                        viewModel.clearRecentlyDuplicatedInterval(interval.id)
+                    }
                     // Цели обучения ставим только на первую карточку: у остальных
                     // координаты перетирали бы подсветку друг друга.
                     val cardTutorialTarget = if (index == 0) {
@@ -582,10 +694,12 @@ fun EditorScreen(
                             .animateItem()
                             .then(cardTutorialTarget)
                             .graphicsLayer {
-                                val scale = 1f - itemDistance * 0.08f
+                                // Эффект «линзы» по удалённости от центра ленты
+                                // перемножается с анимацией появления копии.
+                                val scale = (1f - itemDistance * 0.08f) * entryScale.value
                                 scaleX = scale
                                 scaleY = scale
-                                alpha = 1f - itemDistance * 0.25f
+                                alpha = (1f - itemDistance * 0.25f) * entryAlpha.value
                             }
                     )
                 }

@@ -148,6 +148,95 @@ class SessionHistoryTest {
     }
 
     @Test
+    fun duplicatedIntervalLandsRightUnderItsSource() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+
+        try {
+            val dao = database.timerDao()
+            val templateId = dao.insertTemplate(
+                TemplateEntity(name = "Copy workout", description = "Duplication test")
+            )
+            listOf("Warm up", "Work", "Rest").forEachIndexed { index, name ->
+                dao.insertInterval(
+                    IntervalEntity(
+                        templateId = templateId,
+                        name = name,
+                        durationSeconds = 30,
+                        colorHex = "#3B82F6",
+                        orderIndex = index
+                    )
+                )
+            }
+            val intervals = dao.getIntervalsByTemplateId(templateId).first()
+            val source = intervals[1]
+
+            val copyId = dao.insertIntervalCopy(source)
+            val afterFirstCopy = dao.getIntervalsByTemplateId(templateId).first()
+
+            // Копия встаёт строго под оригиналом, а не под следующим интервалом:
+            // при равных orderIndex порядок решил бы id, и новая копия «уехала»
+            // бы вниз.
+            assertEquals(
+                listOf(intervals[0].id, source.id, copyId, intervals[2].id),
+                afterFirstCopy.map { it.id }
+            )
+            assertEquals(listOf(0, 1, 2, 3), afterFirstCopy.map { it.orderIndex })
+            assertEquals("Work (копия)", afterFirstCopy[2].name)
+            assertEquals(source.durationSeconds, afterFirstCopy[2].durationSeconds)
+            assertEquals(source.colorHex, afterFirstCopy[2].colorHex)
+
+            // Дублирование копии не наращивает суффикс «(копия) (копия)».
+            val copy = afterFirstCopy[2]
+            val secondCopyId = dao.insertIntervalCopy(copy)
+            val afterSecondCopy = dao.getIntervalsByTemplateId(templateId).first()
+
+            assertEquals(
+                listOf(intervals[0].id, source.id, copy.id, secondCopyId, intervals[2].id),
+                afterSecondCopy.map { it.id }
+            )
+            assertEquals("Work (копия)", afterSecondCopy[3].name)
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
+    fun duplicatingDeletedIntervalIsIgnored() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+
+        try {
+            val dao = database.timerDao()
+            val templateId = dao.insertTemplate(
+                TemplateEntity(name = "Gone workout", description = "Missing source test")
+            )
+            val interval = IntervalEntity(
+                templateId = templateId,
+                name = "Work",
+                durationSeconds = 45,
+                colorHex = "#FF3B30",
+                orderIndex = 0
+            )
+            val intervalId = dao.insertInterval(interval)
+
+            // Оригинал мог быть удалён параллельно — вставка копии не должна
+            // оставлять «осиротевшую» строку в ленте.
+            dao.deleteInterval(interval.copy(id = intervalId))
+            val copyId = dao.insertIntervalCopy(interval.copy(id = intervalId))
+
+            assertEquals(-1L, copyId)
+            assertEquals(0, dao.getIntervalsByTemplateId(templateId).first().size)
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
     fun detailedSessionLoggingTracksIntervalProgress() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
