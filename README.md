@@ -95,14 +95,6 @@ keyPassword=...
 
 `storeFile` указывается относительно модуля `app`. Сам ключ (`*.jks`) тоже не коммитится.
 
-Для публикации в RuStore удобнее собрать подписанный бандл:
-
-```bash
-./gradlew bundleRelease
-```
-
-Артефакты появятся в `app/build/outputs/apk/release/` и `app/build/outputs/bundle/release/`.
-
 Задача `copyLegalDocs` копирует `PRIVACY_POLICY.md` и `TERMS_OF_USE.md` в `app/build/generated/legalAssets/legal/`. Gradle подключает этот сгенерированный каталог как источник assets при сборке; вручную копировать документы в `src/main/assets/` не нужно.
 
 ## Структура проекта
